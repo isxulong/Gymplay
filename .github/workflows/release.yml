@@ -24,6 +24,10 @@ jobs:
       - run: npm run build
       - run: npm run gate:size && npm run gate:pwa
 
+      # M-1 探针页随发布一起进 gh-pages，Pages 源切到 gh-pages 后探针链接保持可用
+      - name: 打包探针页进发布产物
+        run: cp -r probe dist/probe
+
       - name: 部署 GitHub Pages 备份镜像（gh-pages 分支）
         uses: peaceiris/actions-gh-pages@v4
         with:

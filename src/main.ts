@@ -1,36 +1,23 @@
 /**
- * 入口：探测能力 → 装配 → 挂载（M0 空壳：只渲染地基自检信息，无业务 UI）。
+ * 入口（M1 编辑器期）：装配（能力探测 / URL 密钥 / 本地恢复 / 冲突裁决）
+ * → 构建编辑器骨架 → 绑定控制器。
+ * 驾驶舱（mode: 'cockpit'）为 M2 交付物，本入口暂不挂载。
  */
 
 import './styles/base.css';
+import './styles/editor.css';
 import { bootstrap } from './app/bootstrap';
-import { h, mount } from './ui/dom';
+import { createEditorController } from './app/controller';
+import { createEditorView } from './ui/editor';
 
-const { store } = bootstrap();
+const { store, persistence } = bootstrap();
 
-function renderShell(): void {
-  const root = document.getElementById('app');
-  if (!root) return;
-  const state = store.get();
-  const caps = state.capabilities;
-  mount(
-    root,
-    h('div', { class: 'fvp-shell__title' }, 'Gymplay · 健身分段变速播放器'),
-    h(
-      'div',
-      { class: 'fvp-shell__meta' },
-      `M0 地基骨架 · rVFC: ${caps?.rVFC ? '✓' : '✗'} · WakeLock: ${caps?.wakeLock ? '✓' : '✗'} · MediaSession: ${caps?.mediaSession ? '✓' : '✗'} · HEVC: ${caps?.hevc ?? 'unknown'}`,
-    ),
-    h(
-      'div',
-      { class: 'fvp-shell__meta' },
-      state.config ? `已恢复本地配置（${state.config.segments.length} 段）` : '编辑器与驾驶舱将在 M1 / M2 到来',
-    ),
-  );
+const rootEl = document.getElementById('app');
+if (rootEl) {
+  const view = createEditorView(rootEl);
+  const controller = createEditorController({ store, persistence, video: view.video });
+  view.bind(store, controller);
 }
-
-renderShell();
-store.subscribe(renderShell);
 
 // PWA：注册 Service Worker（仅 cache-first 缓存 app shell 静态资产，定稿 §2.7）
 if ('serviceWorker' in navigator) {

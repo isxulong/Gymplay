@@ -19,6 +19,8 @@
 
 Vite、TypeScript、Vitest（含 @vitest/coverage-v8）、Playwright、ESLint（含 typescript-eslint）。
 
+> 补记（M1，P2-1 收口）：开发期依赖含已列主依赖的配套类型 / 配置包——@eslint/js（ESLint 推荐配置包）、@types/pako（pako 类型声明）。它们是白名单主依赖的构建期配套物，不进产物、不扩大运行时面。
+
 ## 纪律
 
 新增任何依赖（运行时或开发期）都需先过一道「为什么不手写」的审查，并更新本 ADR。

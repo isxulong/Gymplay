@@ -1,7 +1,7 @@
 {
   "name": "gymplay",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "健身视频分段变速播放器（Gymplay）——纯静态 PWA，本地文件分段变速跟练",
   "type": "module",
   "scripts": {
@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "gate:size": "node scripts/check-size.mjs",
-    "gate:pwa": "node scripts/check-pwa.mjs"
+    "gate:pwa": "node scripts/check-pwa.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "pako": "1.0.11"
