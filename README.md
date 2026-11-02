@@ -24,6 +24,7 @@
 
 - 本地开发：`npm ci && npm run dev`；质量门禁：`npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run gate:size && npm run gate:pwa`；E2E：`npm run test:e2e`（fixtures 已入仓，重建用 `tests/e2e/fixtures/gen-fixtures.sh`）。
 - 分层与契约：见 `docs/adr/`（ADR-001~007）与《综合方案修订定稿 v2》。
+- 部署：tag `v*` 触发 release.yml 构建并发布到 gh-pages 分支。GitHub Pages 源需指向 gh-pages（一次性人工设置：Settings → Pages → Source 选 gh-pages 分支 /(root)；该设置无法由 GITHUB_TOKEN 自动变更）。
 
 ## M-1 探针期背景（历史存档）
 
