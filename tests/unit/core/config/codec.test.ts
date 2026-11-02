@@ -181,3 +181,37 @@ function bytesToKey(bytes: Uint8Array): string {
   for (const b of bytes) bin += String.fromCharCode(b);
   return btoa(bin).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 }
+
+describe('codec · 重叠段密钥导入被拒（M2 修复 P2-1 验证）', () => {
+  it('手工构造携带重叠段的密钥 → decodeKey 拒绝（BAD_SEGMENTS）', async () => {
+    // 绕过 encodeConfig（编码侧对非法配置抛错），手工走同一编码管线模拟外部篡改密钥
+    const { deflate } = await import('pako');
+    const raw = JSON.parse(
+      JSON.stringify(
+        makeConfig({
+          segments: [makeSegment({ id: 'aaa000', start: 0, end: 5 }), makeSegment({ id: 'bbb111', start: 4, end: 9 })],
+          sequence: ['aaa000', 'bbb111'],
+        }),
+      ),
+    );
+    const bytes = deflate(JSON.stringify(raw), { level: 9 });
+    let bin = '';
+    for (const b of bytes) bin += String.fromCharCode(b);
+    const key = btoa(bin).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+    const r = decodeKey(key);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error.code).toBe('BAD_SEGMENTS');
+      expect(r.error.message).toContain('重叠');
+    }
+  });
+
+  it('同一配置去掉重叠后可正常编解码（对照组）', () => {
+    const cfg = makeConfig({
+      segments: [makeSegment({ id: 'aaa000', start: 0, end: 5 }), makeSegment({ id: 'bbb111', start: 5, end: 9 })],
+      sequence: ['aaa000', 'bbb111'],
+    });
+    const r = decodeKey(encodeConfig(cfg));
+    expect(r.ok).toBe(true);
+  });
+});

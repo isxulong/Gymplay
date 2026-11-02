@@ -159,6 +159,19 @@ export function validate(raw: unknown): Result<PlayerConfig> {
     segments.push({ id: s.id, start: s.start, end: s.end, rate: s.rate, label, inQueue });
   }
 
+  // 段间重叠校验（F3 AC3 / M1 遗留 P2-1，M2 修复）：端点相接（prev.end === next.start）
+  // 合法，区间相交拒绝。单段约束在上方循环内逐段校验，此处补齐跨段约束，
+  // 使「通过 validate ⇒ 任意两段不重叠」成立，edit.ts 头注恢复为真。
+  const byStart = [...segments].sort((a, b) => a.start - b.start || a.end - b.end);
+  for (let i = 1; i < byStart.length; i++) {
+    if (byStart[i].start < byStart[i - 1].end) {
+      return fail(
+        'BAD_SEGMENTS',
+        `段区间重叠：${byStart[i - 1].id} [${byStart[i - 1].start},${byStart[i - 1].end}] 与 ${byStart[i].id} [${byStart[i].start},${byStart[i].end}]`,
+      );
+    }
+  }
+
   // sequence
   if (!Array.isArray(raw.sequence)) return fail('BAD_SEQUENCE', 'sequence 必须为数组');
   const sequence: string[] = [];

@@ -302,3 +302,123 @@ describe('scheduler · resync（P7-B 回前台校准续播）', () => {
     expect(engine.ops.length).toBe(ops);
   });
 });
+
+describe('scheduler · 驾驶舱跳段（M2，F6 大按钮 / 线控 nexttrack/previoustrack）', () => {
+  it('next：切到下一队列项并重设速率', () => {
+    const { engine, scheduler } = setup(twoSegmentConfig());
+    scheduler.start();
+    scheduler.next();
+    expect(engine.opSummary().slice(-2)).toEqual(['setRate(2)', 'seek(10)']);
+    expect(scheduler.current().segmentId).toBe('bbb111');
+  });
+
+  it('next：末段且 loop=off → finished 并暂停', () => {
+    const { engine, scheduler, onFinish } = setup(twoSegmentConfig());
+    scheduler.start();
+    scheduler.next(); // → bbb
+    scheduler.next(); // 末段越界 → 收尾
+    expect(engine.opSummary().at(-1)).toBe('pause');
+    expect(scheduler.current().state).toBe('finished');
+    expect(onFinish).toHaveBeenCalledOnce();
+  });
+
+  it('next：末段且 loop=queue → 绕回首段', () => {
+    const { scheduler } = setup(twoSegmentConfig({ loop: { mode: 'queue' } }));
+    scheduler.start();
+    scheduler.next();
+    scheduler.next();
+    const s = scheduler.current();
+    expect(s.segmentId).toBe('aaa000');
+    expect(s.loopsDone).toBe(1);
+    expect(s.state).toBe('playing');
+  });
+
+  it('prev：回到前一队列项从头播放', () => {
+    const { engine, scheduler } = setup(twoSegmentConfig());
+    scheduler.start();
+    scheduler.next(); // → bbb
+    engine.fireTick(13); // bbb 播到 13s
+    scheduler.prev();
+    expect(engine.opSummary().slice(-2)).toEqual(['setRate(1)', 'seek(0)']);
+    expect(scheduler.current().segmentId).toBe('aaa000');
+    expect(scheduler.current().state).toBe('playing');
+  });
+
+  it('prev：已在首项 → 重播当前项（回到段首）', () => {
+    const { engine, scheduler } = setup(twoSegmentConfig());
+    scheduler.start();
+    engine.fireTick(5);
+    scheduler.prev();
+    expect(engine.opSummary().slice(-2)).toEqual(['setRate(1)', 'seek(0)']);
+    expect(scheduler.current().queueIndex).toBe(0);
+  });
+
+  it('next/prev：未开播（idle/finished）时为空操作', () => {
+    const { engine, scheduler } = setup(twoSegmentConfig());
+    scheduler.next();
+    scheduler.prev();
+    expect(engine.ops).toHaveLength(0);
+  });
+});
+
+describe('scheduler · 循环热切换 setLoop（M2 驾驶舱循环接入）', () => {
+  it('播放中 off → segment：段尾重播当前段、不切段、不打断播放位置', () => {
+    const { engine, scheduler } = setup(twoSegmentConfig());
+    scheduler.start();
+    engine.fireTick(4); // aaa 播到 4s
+    scheduler.setLoop({ mode: 'segment', count: 0 });
+    engine.fireTick(10); // 段尾 → 重播 aaa
+    expect(engine.opSummary().slice(-2)).toEqual(['setRate(1)', 'seek(0)']);
+    expect(scheduler.current().segmentId).toBe('aaa000');
+    expect(scheduler.current().loopsDone).toBe(1);
+  });
+
+  it('播放中 off → queue：末段后绕回首段，loopsDone 累加', () => {
+    const { engine, scheduler } = setup(twoSegmentConfig());
+    scheduler.start();
+    scheduler.setLoop({ mode: 'queue', count: 0 });
+    engine.fireTick(10); // → bbb
+    engine.fireTick(20); // 末段 → 绕回
+    expect(scheduler.current().segmentId).toBe('aaa000');
+    expect(scheduler.current().loopsDone).toBe(1);
+  });
+
+  it('segment → off：当前段播完后正常切走', () => {
+    const { engine, scheduler } = setup(twoSegmentConfig({ loop: { mode: 'segment' } }));
+    scheduler.start();
+    scheduler.setLoop({ mode: 'off', count: 0 });
+    engine.fireTick(10); // → bbb（不再重播 aaa）
+    expect(scheduler.current().segmentId).toBe('bbb111');
+  });
+});
+
+describe('scheduler · 单段循环 100 圈无泄漏（M2 出口门禁 2，F5 AC3 实测）', () => {
+  it('100 圈：指令数线性、定时器恒定、状态不腐化', () => {
+    const cfg = makeConfig({
+      segments: [makeSegment({ id: 'aaa000', start: 0, end: 10, rate: 1 })],
+      sequence: ['aaa000'],
+      loop: { mode: 'segment' },
+    });
+    const { engine, clock, scheduler } = setup(cfg, { driver: 'rvfc' });
+    scheduler.start();
+    // start 指令：setRate + seek + play
+    expect(engine.ops).toHaveLength(3);
+    const timersBefore = clock.activeTimers;
+
+    for (let i = 0; i < 100; i++) {
+      engine.fireTick(10); // 每圈段尾触发一次重播
+      clock.advance(50); // 挂钟随 tick 推进，看门狗全程静默
+    }
+
+    const s = scheduler.current();
+    expect(s.loopsDone).toBe(100);
+    expect(s.state).toBe('playing');
+    expect(s.segmentId).toBe('aaa000');
+    // 每圈恰好 setRate + seek 两条指令：无订阅/定时器/回调累积
+    expect(engine.ops).toHaveLength(3 + 100 * 2);
+    expect(clock.activeTimers).toBe(timersBefore); // 仅 rVFC 看门狗一条，100 圈后无新增
+    expect(scheduler.currentDriver()).toBe('rvfc'); // 100 圈看门狗未误触发降级
+    scheduler.stop();
+    expect(clock.activeTimers).toBe(0); // 停止后定时器全清
+  });
+});

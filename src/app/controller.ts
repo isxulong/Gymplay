@@ -1,12 +1,15 @@
 /**
- * L4 · 编辑器控制器：store + persistence + engine + scheduler 的接线层。
+ * L4 · 应用控制器（编辑器 + 驾驶舱共用）：store + persistence + engine + scheduler 的接线层。
  *
  * 职责：
  * - 视频装载（L0 sources 探测 → L1 NativeEngine 装载，F1/F9/F8 AC5 时长校验）；
  * - 编辑动作入口（全部经 L3 edit 纯函数产出新配置，再 commit）；
  * - 自动保存（任何生效配置变更 → 防抖保存；页面隐藏 → 立即保存 + 播放快照）；
  * - 队列播放（L2 SegmentScheduler，P7-B 回前台 resync 校准续播）；
- * - 密钥生成 / 导入 / 冲突裁决（F7 AC3、F8 AC1/AC4、P10 超限提示）。
+ * - 密钥生成 / 导入 / 冲突裁决（F7 AC3、F8 AC1/AC4、P10 超限提示）；
+ * - 驾驶舱（M2）：模式切换、三大按钮（上一段/暂停继续/下一段）、线控映射
+ *   （Media Session play/pause/nexttrack/previoustrack，缺失时 R13 降级提示）、
+ *   Wake Lock 练时常亮（P11，失败时文案 D 一次性提示）、循环热切换（setLoopLive）。
  *
  * 草稿态纪律（F7 AC3）：pendingKeyConfig 存在时，编辑作用于草稿、不写本地存储；
  * 「应用」后草稿转正并落盘，「保留我的」丢弃草稿。两态共用同一组编辑入口。
@@ -36,12 +39,14 @@ import type { PlayerEngine } from '../core/player/engine';
 import { createNativeEngine } from '../core/player/native-engine';
 import { compilePlan } from '../core/scheduler/plan';
 import { SegmentScheduler } from '../core/scheduler/scheduler';
+import { createMediaSession, type MediaSessionController } from '../platform/media-session';
 import {
   canPlayTypeProbe,
   loadLocalSource,
   COPY_LOAD_FAILED,
   type SourceLoadResult,
 } from '../platform/sources';
+import { createWakeLock, type WakeLockController } from '../platform/wake-lock';
 import { makeNotice } from './bootstrap';
 import type { AppState, NoticeKind } from './state';
 import type { Store } from './store';
@@ -66,6 +71,8 @@ const SNAPSHOT_INTERVAL_MS = 1000;
 
 export interface QueueFrame {
   playing: boolean;
+  /** 引擎暂停中（调度器仍在运行，驾驶舱大按钮据此切换图标） */
+  paused: boolean;
   queueIndex: number;
   queueTotal: number;
   segmentId: string | null;
@@ -92,6 +99,20 @@ export interface EditorController {
   setLoopMode(mode: PlayerConfig['loop']['mode'], count?: number): void;
   playQueue(): void;
   stopQueue(): void;
+  /** M2 驾驶舱：进入（自动从队列头开播；已在播则直接切入） */
+  enterCockpit(): void;
+  /** M2 驾驶舱：退出（停止队列播放，回编辑器） */
+  exitCockpit(): void;
+  /** 大按钮：暂停 / 继续（播完或未开播时从头开播） */
+  cockpitToggle(): void;
+  /** 大按钮 / 线控双击：下一段 */
+  cockpitNext(): void;
+  /** 大按钮 / 线控：上一段 */
+  cockpitPrev(): void;
+  /** 驾驶舱循环热切换：落盘 + 调度器就地更新，不打断当前段播放 */
+  setLoopLive(mode: PlayerConfig['loop']['mode'], count?: number): void;
+  /** 关闭驾驶舱一次性提示（文案 D / R13 降级） */
+  dismissHint(kind: 'wakeLock' | 'lineControl'): void;
   openShare(): void;
   confirmShare(): void;
   closeShare(): void;
@@ -123,6 +144,121 @@ export function createEditorController(opts: {
   let pendingReplaceFile: File | null = null;
   let lastSnapshotAt = 0;
   const frameCbs = new Set<(timeSec: number, queue: QueueFrame) => void>();
+
+  // ---------- M2 驾驶舱：Wake Lock + Media Session（线控） ----------
+
+  // Wake Lock（P11）：实例常驻，锁随驾驶舱播放状态请求/释放；
+  // API 缺失或请求被拒 → 静默降级 + 一次性文案 D（定稿 §1.2，驾驶舱顶部）
+  const wakeLock: WakeLockController = createWakeLock();
+  // Media Session（线控）：随驾驶舱进入创建、退出销毁（避免劫持编辑器播放）
+  let mediaSession: MediaSessionController | null = null;
+  // 一次性提示的会话级去重（「顶部一次性提示」，定稿 §1.1 F6 AC5）
+  const hintShown = { wakeLock: false, lineControl: false };
+  let lastMetaSegmentId: string | null = null;
+
+  wakeLock.onUnavailable(() => {
+    if (!hintShown.wakeLock) {
+      hintShown.wakeLock = true;
+      store.update({ wakeLockHint: true });
+    }
+  });
+
+  /** 驾驶舱播放中持有常亮锁；暂停/停止/退出即释放（F6 AC5「播放期间」口径）。 */
+  function syncWakeLock(): void {
+    const st = store.get();
+    if (st.mode === 'cockpit' && st.queuePlaying && video.paused === false) {
+      void wakeLock.request();
+    } else {
+      void wakeLock.release();
+    }
+  }
+
+  function bindMediaSession(): void {
+    mediaSession = createMediaSession({
+      onPlay: () => resumeCockpit(),
+      onPause: () => pauseCockpit(),
+      onNext: () => cockpitNext(),
+      onPrevious: () => cockpitPrev(),
+    });
+    if (!mediaSession.supported && !hintShown.lineControl) {
+      // R13 降级路径：平台不支持线控 → 一次性提示，跳段用大按钮
+      hintShown.lineControl = true;
+      store.update({ lineControlHint: true });
+    }
+  }
+
+  function unbindMediaSession(): void {
+    mediaSession?.destroy();
+    mediaSession = null;
+    lastMetaSegmentId = null;
+  }
+
+  /** 下一段（驾驶舱大按钮 / 线控双击 nexttrack 共用） */
+  function cockpitNext(): void {
+    if (!scheduler || !store.get().queuePlaying) return;
+    scheduler.next();
+    emitFrame();
+  }
+
+  /** 上一段（驾驶舱大按钮 / 线控 previoustrack 共用） */
+  function cockpitPrev(): void {
+    if (!scheduler || !store.get().queuePlaying) return;
+    scheduler.prev();
+    emitFrame();
+  }
+
+  function pauseCockpit(): void {
+    if (!store.get().queuePlaying || video.paused) return;
+    engine.pause();
+    mediaSession?.setPlaybackState('paused');
+    syncWakeLock();
+    emitFrame();
+  }
+
+  function resumeCockpit(): void {
+    const st = store.get();
+    if (!st.videoReady) return;
+    if (!st.queuePlaying) {
+      // 播完 / 未开播 → 从头开播
+      if (startQueue()) {
+        mediaSession?.setPlaybackState('playing');
+        syncWakeLock();
+      }
+      return;
+    }
+    if (video.paused) {
+      void engine.play();
+      mediaSession?.setPlaybackState('playing');
+      syncWakeLock();
+      emitFrame();
+    }
+  }
+
+  /** 启动队列（内部）：成功返回 true。供编辑器「播放队列」与驾驶舱进入/续播共用。 */
+  function startQueue(): boolean {
+    const st = store.get();
+    if (!st.videoReady || st.queuePlaying) return st.queuePlaying;
+    const cfg = activeConfig();
+    if (!cfg) return false;
+    scheduler = new SegmentScheduler(engine, systemClock, compilePlan(cfg), {
+      capabilities: { rVFC: caps?.rVFC ?? false },
+      onFinish: () => {
+        store.update({ queuePlaying: false });
+        persistence.clearPlayback();
+        mediaSession?.setPlaybackState('none');
+        syncWakeLock();
+        emitFrame();
+      },
+    });
+    if (!scheduler.start()) {
+      scheduler = null;
+      notify('warn', '播放队列为空：请先勾选至少一段。');
+      return false;
+    }
+    store.update({ queuePlaying: true });
+    emitFrame();
+    return true;
+  }
 
   // ---------- 基础工具 ----------
 
@@ -159,13 +295,14 @@ export function createEditorController(opts: {
 
   function queueFrame(): QueueFrame {
     if (!scheduler) {
-      return { playing: false, queueIndex: -1, queueTotal: 0, segmentId: null, rate: 1, remainingMs: 0, loopsDone: 0 };
+      return { playing: false, paused: video.paused, queueIndex: -1, queueTotal: 0, segmentId: null, rate: 1, remainingMs: 0, loopsDone: 0 };
     }
     const s = scheduler.current();
     const cfg = activeConfig();
     const total = cfg ? compilePlan(cfg).items.length : 0;
     return {
       playing: s.state === 'playing',
+      paused: video.paused,
       queueIndex: s.queueIndex,
       queueTotal: total,
       segmentId: s.segmentId,
@@ -178,6 +315,12 @@ export function createEditorController(opts: {
   function emitFrame(): void {
     const t = engine.getTime();
     const q = queueFrame();
+    // 驾驶舱线控卡片元数据：段切换时更新（锁屏/耳机控件上显示当前段名）
+    if (mediaSession && q.segmentId !== lastMetaSegmentId) {
+      lastMetaSegmentId = q.segmentId;
+      const seg = activeConfig()?.segments.find((x) => x.id === q.segmentId);
+      mediaSession.setMetadata({ title: seg?.label || '未命名段' });
+    }
     for (const cb of frameCbs) cb(t, q);
   }
 
@@ -230,6 +373,8 @@ export function createEditorController(opts: {
     }
     if (store.get().queuePlaying) store.update({ queuePlaying: false });
     persistence.clearPlayback();
+    mediaSession?.setPlaybackState('none');
+    syncWakeLock();
   }
 
   // ---------- 视频装载 ----------
@@ -291,7 +436,7 @@ export function createEditorController(opts: {
     } else {
       const cfg = createInitialConfig(
         { filename: file.name, duration: actual },
-        { createdAt: new Date().toISOString(), appVersion: '0.1.0' },
+        { createdAt: new Date().toISOString(), appVersion: '0.2.0' },
       );
       store.update({ config: cfg, configOrigin: 'local-edit' });
       persist(cfg);
@@ -436,31 +581,68 @@ export function createEditorController(opts: {
     },
 
     playQueue(): void {
-      const st = store.get();
-      if (!st.videoReady || st.queuePlaying) return;
-      const cfg = activeConfig();
-      if (!cfg) return;
-      scheduler = new SegmentScheduler(engine, systemClock, compilePlan(cfg), {
-        capabilities: { rVFC: caps?.rVFC ?? false },
-        onFinish: () => {
-          store.update({ queuePlaying: false });
-          persistence.clearPlayback();
-          emitFrame();
-        },
-      });
-      if (!scheduler.start()) {
-        scheduler = null;
-        notify('warn', '播放队列为空：请先勾选至少一段。');
-        return;
-      }
-      store.update({ queuePlaying: true });
-      emitFrame();
+      startQueue();
     },
 
     stopQueue(): void {
       stopQueueInternal();
       engine.pause();
       emitFrame();
+    },
+
+    // ---------- M2 驾驶舱 ----------
+
+    enterCockpit(): void {
+      const st = store.get();
+      if (!st.videoReady || st.mode === 'cockpit') return;
+      const cfg = activeConfig();
+      if (!cfg || compilePlan(cfg).items.length === 0) {
+        notify('warn', '播放队列为空：请先勾选至少一段。');
+        return;
+      }
+      // 未在播 → 从队列头开播；编辑器里已在播 → 直接切入不打断
+      if (!st.queuePlaying && !startQueue()) return;
+      store.update({ mode: 'cockpit' });
+      bindMediaSession();
+      mediaSession?.setPlaybackState(video.paused ? 'paused' : 'playing');
+      syncWakeLock();
+      emitFrame();
+    },
+
+    exitCockpit(): void {
+      if (store.get().mode !== 'cockpit') return;
+      stopQueueInternal();
+      engine.pause();
+      unbindMediaSession();
+      store.update({ mode: 'editor', wakeLockHint: false, lineControlHint: false });
+      syncWakeLock();
+      emitFrame();
+    },
+
+    cockpitToggle(): void {
+      if (store.get().mode !== 'cockpit') return;
+      if (!store.get().queuePlaying || video.paused) resumeCockpit();
+      else pauseCockpit();
+    },
+
+    cockpitNext(): void {
+      cockpitNext();
+    },
+
+    cockpitPrev(): void {
+      cockpitPrev();
+    },
+
+    setLoopLive(mode, count) {
+      const normalized = mode === 'queue' && count !== undefined && count > 0 ? Math.floor(count) : 0;
+      if (!commitEdit(setLoop(mustConfig(), mode, count))) return;
+      // 热切换：调度器就地更新循环语义，不打断当前段（重编译会重置播放位置）
+      scheduler?.setLoop({ mode, count: normalized });
+      emitFrame();
+    },
+
+    dismissHint(kind) {
+      store.update(kind === 'wakeLock' ? { wakeLockHint: false } : { lineControlHint: false });
     },
 
     openShare(): void {
@@ -572,6 +754,8 @@ export function createEditorController(opts: {
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('pagehide', onPageHide);
       frameCbs.clear();
+      unbindMediaSession();
+      wakeLock.destroy();
       engine.destroy();
       objectUrlRevoke?.();
     },

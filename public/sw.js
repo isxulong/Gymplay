@@ -5,7 +5,7 @@
  * - 不拦截、不缓存任何页面导航的 hash 部分（hash 本不上行，天然安全，此处为显式纪律）；
  * - 检测到新版本时由页面提示「刷新即更新」（M3 接线 UI）。
  */
-const CACHE_VERSION = 'v0.0.0-m0';
+const CACHE_VERSION = 'v0.2.0';
 const CACHE_NAME = `gymplay-shell-${CACHE_VERSION}`;
 const SHELL_ASSETS = ['./', './index.html', './manifest.webmanifest'];
 

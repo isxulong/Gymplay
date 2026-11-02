@@ -18,6 +18,8 @@ export interface QueueCallbacks {
   onLoop(mode: PlayerConfig['loop']['mode'], count?: number): void;
   onPlayQueue(): void;
   onStopQueue(): void;
+  /** M2：进入练时驾驶舱（F6） */
+  onEnterCockpit(): void;
 }
 
 export interface QueueModel {
@@ -98,7 +100,17 @@ export function renderQueue(container: HTMLElement, model: QueueModel, cb: Queue
     '■ 停止',
   );
   on(stopBtn, 'click', () => cb.onStopQueue());
-  children.push(h('div', { class: 'queue__controls' }, playBtn, stopBtn));
+  const cockpitBtn = h(
+    'button',
+    {
+      class: 'fvp-btn fvp-btn--cockpit',
+      'data-testid': 'enter-cockpit',
+      ...(videoReady && playableCount > 0 ? {} : { disabled: '' }),
+    },
+    '🥊 进入驾驶舱',
+  );
+  on(cockpitBtn, 'click', () => cb.onEnterCockpit());
+  children.push(h('div', { class: 'queue__controls' }, playBtn, stopBtn, cockpitBtn));
 
   // 队列项列表
   const list = h('ol', { class: 'queue__list', 'data-testid': 'queue-list' });

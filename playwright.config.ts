@@ -23,7 +23,13 @@ export default defineConfig({
   use: {
     baseURL: 'http://127.0.0.1:5199',
     launchOptions: {
-      args: ['--autoplay-policy=no-user-gesture-required', '--mute-audio'],
+      args: [
+        '--autoplay-policy=no-user-gesture-required',
+        '--mute-audio',
+        // 单段循环 100 圈无泄漏实测（M2 门禁 2）：精确堆读数 + 暴露手动 GC
+        '--enable-precise-memory-info',
+        '--js-flags=--expose-gc',
+      ],
       ...(chromiumPath ? { executablePath: chromiumPath } : {}),
     },
   },

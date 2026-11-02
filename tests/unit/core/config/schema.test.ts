@@ -114,3 +114,62 @@ describe('schema v1 · 反例', () => {
     });
   }
 });
+
+describe('schema v1 · 段间重叠校验（M2 修复 P2-1：F3 AC3 跨段约束补全）', () => {
+  it('两段区间重叠 → BAD_SEGMENTS 拒绝', () => {
+    const raw = asRaw(
+      makeConfig({
+        segments: [makeSegment({ id: 'aaa000', start: 0, end: 5 }), makeSegment({ id: 'bbb111', start: 4, end: 8 })],
+        sequence: ['aaa000', 'bbb111'],
+      }),
+    );
+    const r = validate(raw);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error.code).toBe('BAD_SEGMENTS');
+      expect(r.error.message).toContain('重叠');
+    }
+  });
+
+  it('乱序定义的重叠段同样检出', () => {
+    const raw = asRaw(
+      makeConfig({
+        segments: [makeSegment({ id: 'aaa000', start: 5, end: 10 }), makeSegment({ id: 'bbb111', start: 2, end: 6 })],
+        sequence: ['aaa000', 'bbb111'],
+      }),
+    );
+    const r = validate(raw);
+    expect(r.ok).toBe(false);
+  });
+
+  it('嵌套包含（一段完全包住另一段）→ 检出', () => {
+    const raw = asRaw(
+      makeConfig({
+        segments: [makeSegment({ id: 'aaa000', start: 0, end: 30 }), makeSegment({ id: 'bbb111', start: 10, end: 12 })],
+        sequence: ['aaa000', 'bbb111'],
+      }),
+    );
+    expect(validate(raw).ok).toBe(false);
+  });
+
+  it('端点相接（prev.end === next.start）合法，不误伤', () => {
+    const raw = asRaw(
+      makeConfig({
+        segments: [makeSegment({ id: 'aaa000', start: 0, end: 5 }), makeSegment({ id: 'bbb111', start: 5, end: 10 })],
+        sequence: ['aaa000', 'bbb111'],
+      }),
+    );
+    const r = validate(raw);
+    expect(r.ok).toBe(true);
+  });
+
+  it('存在缝隙（不相接不重叠）合法', () => {
+    const raw = asRaw(
+      makeConfig({
+        segments: [makeSegment({ id: 'aaa000', start: 0, end: 5 }), makeSegment({ id: 'bbb111', start: 8, end: 10 })],
+        sequence: ['aaa000', 'bbb111'],
+      }),
+    );
+    expect(validate(raw).ok).toBe(true);
+  });
+});

@@ -30,7 +30,7 @@ export interface SchedulerStatus {
   rate: number;
   /** 当前段剩余毫秒（基于最近一次 tick 的媒体时间） */
   remainingMs: number;
-  /** 已完成的整列循环遍数（loop.mode="queue" 时有意义） */
+  /** 已完成的循环遍数：loop.mode="queue" 为整列圈数；"segment" 为单段重播次数；off 恒 0 */
   loopsDone: number;
 }
 
@@ -112,6 +112,36 @@ export class SegmentScheduler {
   /** 当前实际驱动（降级后变化，测试与 UI 提示用）。 */
   currentDriver(): SchedulerDriver {
     return this.driver;
+  }
+
+  /**
+   * 下一段（F6 驾驶舱大按钮 / 线控双击，Media Session nexttrack）。
+   * 复用段尾推进语义：末段按 loop 规则处理（queue 绕回 / off 收尾 / segment 重播）。
+   * 不改播放/暂停状态（暂停中跳段 → 落在新段起点保持暂停）。
+   */
+  next(): void {
+    if (this.state !== 'playing') return;
+    this.advance();
+  }
+
+  /**
+   * 上一段（F6 驾驶舱大按钮 / 线控，Media Session previoustrack）。
+   * 回到前一队列项从头播放；已在首项则重播当前项（回到段首）。
+   * 不改变播放/暂停状态。
+   */
+  prev(): void {
+    if (this.state !== 'playing') return;
+    const idx = Math.max(0, this.queueIndex - 1);
+    this.queueIndex = idx;
+    this.applyItem(this.plan.items[idx]);
+  }
+
+  /**
+   * 循环模式热切换（M2 驾驶舱循环接入）：只改后续段尾/末段的循环语义，
+   * 不重编译 plan、不移动播放位置，练时切换不打断当前段。
+   */
+  setLoop(loop: PlayPlan['loop']): void {
+    this.plan.loop = { ...loop };
   }
 
   /**
@@ -221,7 +251,8 @@ export class SegmentScheduler {
     const item = this.currentItem();
     if (item === null) return;
     if (this.plan.loop.mode === 'segment') {
-      // 单段循环：当前段播完自动重播（承接 F5 AC3）
+      // 单段循环：当前段播完自动重播（承接 F5 AC3），loopsDone 记重播圈数（M2 驾驶舱展示）
+      this.loopsDone += 1;
       this.applyItem(item);
       return;
     }

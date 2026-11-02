@@ -260,6 +260,7 @@ export function createEditorView(root: HTMLElement): EditorView {
         onLoop: (mode, count) => controller.setLoopMode(mode, count),
         onPlayQueue: () => controller.playQueue(),
         onStopQueue: () => controller.stopQueue(),
+        onEnterCockpit: () => controller.enterCockpit(),
       });
     } else {
       mount(segmentList);

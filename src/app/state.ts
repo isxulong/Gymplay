@@ -47,6 +47,10 @@ export interface AppState {
   shareConfirmOpen: boolean;
   shareLink: string | null;
   notices: Notice[];
+  /** 驾驶舱顶部一次性提示（定稿 §1.2 文案 D）：Wake Lock API 缺失 / 请求被拒 */
+  wakeLockHint: boolean;
+  /** 驾驶舱一次性提示（R13 降级路径）：Media Session 线控不可用 */
+  lineControlHint: boolean;
 }
 
 export const initialState: AppState = {
@@ -66,4 +70,6 @@ export const initialState: AppState = {
   shareConfirmOpen: false,
   shareLink: null,
   notices: [],
+  wakeLockHint: false,
+  lineControlHint: false,
 };
