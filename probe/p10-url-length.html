@@ -134,7 +134,7 @@
       // round-trip 自检：解压回来应与原 JSON 完全一致
       var back = decodeConfig(enc.b64url);
       var rt = JSON.stringify(back) === enc.json;
-      var total = baseURL.length + 1 + 3 + enc.b64url.length; // '#c='
+      var total = baseURL.length + 3 + enc.b64url.length; // '#c='
       var pass = total <= 1500;
       if (!pass) allPass = false;
       encoded[n] = enc;

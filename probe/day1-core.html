@@ -183,11 +183,11 @@
     $('p7aStart').disabled = false;
   };
 
-  var p7b = { active: false, iv: 0, ivId: null, hiddenAt: null, ctAtHidden: null, t0: null };
+  var p7b = { active: false, iv: 0, ivId: null, hiddenAt: null, ctAtHidden: null, ivAtHidden: null, t0: null };
   $('p7bStart').onclick = async function () {
     var v = $('p7v');
     if (!v.src) { p7log('请先选择素材 A', 'bad'); return; }
-    p7b.active = true; p7b.iv = 0; p7b.hiddenAt = null;
+    p7b.active = true; p7b.iv = 0; p7b.hiddenAt = null; p7b.ivAtHidden = null;
     p7b.t0 = Date.now();
     if (p7b.ivId) clearInterval(p7b.ivId);
     p7b.ivId = setInterval(function () { p7b.iv++; }, 50);
@@ -200,13 +200,15 @@
     if (document.hidden) {
       p7b.hiddenAt = Date.now();
       p7b.ctAtHidden = v.currentTime;
+      p7b.ivAtHidden = p7b.iv;
     } else if (p7b.hiddenAt) {
       var hiddenMs = Date.now() - p7b.hiddenAt;
       var expected = Math.round(hiddenMs / 50);
       var ctDelta = v.currentTime - p7b.ctAtHidden;
+      var ivDelta = p7b.iv - p7b.ivAtHidden;
       p7log('[' + ts() + '] P7-B 回到前台：');
       p7log('  后台时长：' + (hiddenMs / 1000).toFixed(1) + ' 秒');
-      p7log('  setInterval(50) 实际触发：' + p7b.iv + ' 次（按后台时长理论值 ' + expected + ' 次；实测频率约 ' + (p7b.iv / (hiddenMs / 1000)).toFixed(2) + ' Hz，理论 20 Hz）');
+      p7log('  setInterval(50) 后台实际触发：' + ivDelta + ' 次（按后台时长理论值 ' + expected + ' 次；实测频率约 ' + (ivDelta / (hiddenMs / 1000)).toFixed(2) + ' Hz，理论 20 Hz）');
       p7log('  currentTime 后台推进：' + ctDelta.toFixed(2) + ' 秒' + (ctDelta > 0.01 ? '（>0：后台仍在连播）' : '（≈0：后台播放被暂停/冻结）'));
       p7log('  请补充人工观察：后台期间是否仍能听到声音？');
       p7b.active = false;
@@ -292,11 +294,17 @@
   async function trial(el, src, t) {
     await p2EnsureLoaded(el, src);
     var t0 = now();
+    var onSeeked;
+    var seekedP = new Promise(function (r) {
+      onSeeked = function () { r(true); };
+      el.addEventListener('seeked', onSeeked);
+    });
     el.currentTime = t;
     var ok = await Promise.race([
-      once(el, 'seeked').then(function () { return true; }),
+      seekedP,
       sleep(3000).then(function () { return false; })
     ]);
+    el.removeEventListener('seeked', onSeeked);
     return { ms: now() - t0, ok: ok };
   }
 
@@ -344,17 +352,25 @@
     if (p2Running) return;
     p2Running = true; $('p2RunA').disabled = true; $('p2RunB').disabled = true;
     p2log('[' + ts() + '] 场景 B 开始：两文件交替换源 20 次（每次换源后立即随机 seek）……');
+    v.src = urlB; v.load();
+    await once(v, 'loadeddata');
     var results = [];
     for (var i = 0; i < 20; i++) {
       var src = (i % 2 === 0) ? urlA : urlB;
       var t = randomTime(v.duration || 60);
       if (v.src !== src) { v.src = src; v.load(); await once(v, 'loadeddata'); t = randomTime(v.duration); }
       var t0 = now();
+      var onSeeked;
+      var seekedP = new Promise(function (r) {
+        onSeeked = function () { r(true); };
+        v.addEventListener('seeked', onSeeked);
+      });
       v.currentTime = t;
       var ok = await Promise.race([
-        once(v, 'seeked').then(function () { return true; }),
+        seekedP,
         sleep(3000).then(function () { return false; })
       ]);
+      v.removeEventListener('seeked', onSeeked);
       var r = { ms: now() - t0, ok: ok };
       results.push(r);
       p2log('  #' + (i + 1) + ' [' + (i % 2 === 0 ? 'A' : 'B') + '] seek@' + t.toFixed(1) + 's → ' + (r.ok ? r.ms.toFixed(0) + 'ms' : '冻结（>3000ms）'), r.ok ? (r.ms > 500 ? 'bad' : '') : 'bad');
