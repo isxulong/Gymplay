@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M-1 探针 · P3 循环精度</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Noto Sans SC", sans-serif; margin: 0 auto; max-width: 720px; padding: 12px 14px 60px; color: #1c1c1e; background: #f7f7f9; }
+  h1 { font-size: 1.2rem; margin: .4em 0 .2em; }
+  section { background: #fff; border: 1px solid #e4e4e8; border-radius: 10px; padding: 10px 12px; margin-top: 14px; }
+  .notice { background: #fff8e6; border-color: #f0dfa8; font-size: .85rem; line-height: 1.6; }
+  input[type=file] { display: block; margin-top: 4px; font-size: .8rem; }
+  video { width: 100%; max-width: 320px; background: #000; border-radius: 6px; display: block; margin: 6px 0; }
+  button { font-size: .9rem; padding: 8px 12px; margin: 4px 4px 4px 0; border: 1px solid #c9c9d0; background: #fff; border-radius: 8px; }
+  button.primary { background: #2f6fed; border-color: #2f6fed; color: #fff; }
+  button:disabled { opacity: .45; }
+  pre { background: #111; color: #9fe89f; font-size: .74rem; line-height: 1.5; padding: 8px 10px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow-y: auto; }
+  .ok { color: #0a7d24; } .bad { color: #c22020; }
+  .hint { font-size: .8rem; color: #555; line-height: 1.6; }
+  table { border-collapse: collapse; font-size: .82rem; margin-top: 6px; }
+  td, th { border: 1px solid #ddd; padding: 4px 10px; text-align: right; }
+  th { background: #f2f4f8; }
+</style>
+</head>
+<body>
+
+<h1>M-1 探针 · P3 循环精度（段 [5.0s, 10.0s] × 50 圈）</h1>
+<p class="hint">目的（R3）：实测段边界切换的时间偏差，验证「100~300ms 可接受」假设。判定：<b>P95 ≤ 0.300s → 假设成立</b>；P95 &gt; 0.300s → 不成立，启用 fallback（提前量调度 / 放宽承诺，详见风险计划第四章）。两种模式（rVFC 主线、setInterval(50) 对照）各跑一遍，两组数据都记录。设备：iPhone + 桌面 Chrome。</p>
+
+<section class="notice">
+  <b>素材要求：</b>1~3 分钟真人讲解健身视频（H.264/AAC mp4），<b>时长必须大于 10.5 秒</b>。
+  <input type="file" id="fileA" accept="video/*">
+  <div id="fileStatus">尚未选择素材。</div>
+</section>
+
+<section>
+  <video id="p3v" playsinline muted loop controls></video>
+  <div class="hint">开始后请勿触碰屏幕，直到提示完成。两种模式依次各跑一遍。</div>
+  <div>
+    <button id="runMain" class="primary">跑主线（rVFC 调度）×50 圈</button>
+    <button id="runCtrl" class="primary">跑对照（setInterval 50ms）×50 圈</button>
+  </div>
+  <pre id="p3out"></pre>
+  <div id="p3table"></div>
+</section>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  function log(s, cls) {
+    var el = $('p3out');
+    var line = document.createElement('div');
+    line.textContent = s;
+    if (cls) line.className = cls;
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+  }
+  function once(el, ev) { return new Promise(function (r) { el.addEventListener(ev, r, { once: true }); }); }
+
+  var SEG_IN = 5.0, SEG_OUT = 10.0, LAPS = 50;
+  var results = { main: null, ctrl: null };
+  var running = false;
+
+  $('fileA').addEventListener('change', function (e) {
+    if (e.target.files && e.target.files[0]) {
+      var v = $('p3v');
+      v.src = URL.createObjectURL(e.target.files[0]);
+      $('fileStatus').textContent = '素材已就绪：' + e.target.files[0].name;
+      v.addEventListener('loadedmetadata', function onMeta() {
+        v.removeEventListener('loadedmetadata', onMeta);
+        if (v.duration && v.duration < 10.5) {
+          log('⚠ 素材时长 ' + v.duration.toFixed(1) + 's < 10.5s，不满足 [5,10] 段循环要求，请换一段更长的视频', 'bad');
+        } else {
+          log('素材时长：' + (v.duration || '?') + 's，满足要求');
+        }
+      });
+    }
+  });
+
+  function stats(errs) {
+    var a = errs.slice().sort(function (x, y) { return x - y; });
+    var p95Idx = Math.max(0, Math.ceil(0.95 * a.length) - 1);
+    return {
+      n: a.length,
+      min: a[0],
+      median: a[Math.floor(a.length / 2)],
+      p95: a[p95Idx],
+      max: a[a.length - 1]
+    };
+  }
+
+  function fmt(x) { return x.toFixed(3) + ' s'; }
+
+  function runLoop(mode) {
+    return new Promise(function (resolve) {
+      var v = $('p3v');
+      var errs = [], laps = 0;
+      var ivId = null, rvfcId = null;
+      var wallStart = Date.now();
+
+      function check() {
+        if (v.seeking) return; // seek 完成前 currentTime 仍为出点，防重复计圈
+        if (v.currentTime >= SEG_OUT) {
+          errs.push(v.currentTime - SEG_OUT);
+          laps++;
+          if (laps >= LAPS) return finish();
+          v.currentTime = SEG_IN;
+        }
+      }
+      function finish() {
+        if (ivId !== null) clearInterval(ivId);
+        if (rvfcId !== null) { try { v.cancelVideoFrameCallback(rvfcId); } catch (e) {} }
+        v.pause();
+        v.removeEventListener('timeupdate', noopTu);
+        var st = stats(errs);
+        var wall = (Date.now() - wallStart) / 1000;
+        log('  ' + mode + '：完成 ' + st.n + ' 圈，实际耗时 ' + wall.toFixed(1) + 's（理论 ' + (LAPS * (SEG_OUT - SEG_IN) / v.playbackRate).toFixed(1) + 's @1x）');
+        log('  误差 min=' + fmt(st.min) + ' median=' + fmt(st.median) + ' P95=' + fmt(st.p95) + ' max=' + fmt(st.max));
+        var pass = st.p95 <= 0.300;
+        log('  判定：P95 ' + fmt(st.p95) + (pass ? ' ≤ ' : ' > ') + '0.300s → ' + (pass ? '假设成立' : '不成立，启用 fallback'), pass ? 'ok' : 'bad');
+        resolve(st);
+      }
+      var noopTu = function () {};
+
+      v.playbackRate = 1;
+      v.currentTime = SEG_IN;
+      v.addEventListener('timeupdate', noopTu);
+      v.play().then(function () {
+        if (mode === 'rVFC 主线') {
+          if (!('requestVideoFrameCallback' in HTMLVideoElement.prototype)) {
+            log('rVFC 不存在，主线不可用（判定：主线降级 50ms 轮询）', 'bad');
+            v.pause();
+            resolve(null);
+            return;
+          }
+          (function tick() {
+            check();
+            if (laps < LAPS) rvfcId = v.requestVideoFrameCallback(tick);
+          })();
+        } else {
+          ivId = setInterval(check, 50);
+        }
+      }).catch(function (err) {
+        log('播放被拒：' + err.name + ' ' + (err.message || '') + '，请重新点击按钮', 'bad');
+        resolve(null);
+      });
+    });
+  }
+
+  function renderTable() {
+    var html = '<table><tr><th>模式</th><th>圈数</th><th>min</th><th>median</th><th>P95</th><th>max</th><th>判定</th></tr>';
+    [['rVFC 主线', results.main], ['setInterval(50) 对照', results.ctrl]].forEach(function (row) {
+      var label = row[0], r = row[1];
+      if (r) {
+        html += '<tr><td>' + label + '</td><td>' + r.n + '</td><td>' + fmt(r.min) + '</td><td>' + fmt(r.median) + '</td><td>' + fmt(r.p95) + '</td><td>' + fmt(r.max) + '</td><td>' + (r.p95 <= 0.3 ? '✅' : '❌') + '</td></tr>';
+      } else {
+        html += '<tr><td>' + label + '</td><td colspan="6">未运行</td></tr>';
+      }
+    });
+    html += '</table>';
+    $('p3table').innerHTML = html;
+  }
+
+  async function guardRun(mode) {
+    var v = $('p3v');
+    if (!v.src) { log('请先选择素材', 'bad'); return; }
+    if (running) return;
+    running = true;
+    $('runMain').disabled = true; $('runCtrl').disabled = true;
+    log('[' + mode + '] 开始：50 圈循环（' + SEG_IN + 's→' + SEG_OUT + 's），请勿触碰屏幕……');
+    var st = await runLoop(mode);
+    if (mode === 'rVFC 主线') results.main = st; else results.ctrl = st;
+    renderTable();
+    running = false;
+    $('runMain').disabled = false; $('runCtrl').disabled = false;
+  }
+
+  $('runMain').onclick = function () { guardRun('rVFC 主线'); };
+  $('runCtrl').onclick = function () { guardRun('setInterval(50) 对照'); };
+
+  log('P3 就绪。rVFC 存在：' + ('requestVideoFrameCallback' in HTMLVideoElement.prototype));
+})();
+</script>
+</body>
+</html>
