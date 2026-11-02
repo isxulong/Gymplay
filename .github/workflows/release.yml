@@ -1,0 +1,39 @@
+name: Release
+
+# 打 tag vX.Y.Z 触发（蓝图 §7：tag 即发布，SemVer 与 Schema 版本解耦）。
+# 双站同源同版本：Cloudflare Pages 主站 + GitHub Pages 备份镜像（gh-pages 分支）。
+# M0 仅搭骨架：CF Pages 所需的 CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID
+# 密钥在 M3 发布收口前配置到仓库 Secrets。
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint && npm run typecheck && npm run test:coverage
+      - run: npm run build
+      - run: npm run gate:size && npm run gate:pwa
+
+      - name: 部署 GitHub Pages 备份镜像（gh-pages 分支）
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+
+      - name: 部署 Cloudflare Pages 主站
+        if: ${{ vars.CLOUDFLARE_DEPLOY_ENABLED == 'true' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=gymplay

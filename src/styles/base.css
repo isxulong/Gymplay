@@ -1,0 +1,53 @@
+/* L5 · 基础样式：CSS Custom Properties 主题变量 + reset（蓝图 §2.4）。
+   M0 仅空壳所需最小集；editor.css / cockpit.css 随 M1 / M2 落地。 */
+
+:root {
+  --fvp-bg: #111418;
+  --fvp-fg: #f2f4f6;
+  --fvp-accent: #34c759;
+  --fvp-muted: #8a919c;
+  --fvp-font:
+    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', 'Segoe UI', sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--fvp-bg);
+  color: var(--fvp-fg);
+  font-family: var(--fvp-font);
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+}
+
+.fvp-shell__title {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.fvp-shell__meta {
+  color: var(--fvp-muted);
+  font-size: 13px;
+  line-height: 1.8;
+}

@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: ESLint
+        run: npm run lint
+      - name: tsc --noEmit
+        run: npm run typecheck
+      - name: Vitest（单测 + core 覆盖率 ≥90% 门禁）
+        run: npm run test:coverage
+      - name: 构建
+        run: npm run build
+      - name: 体积门禁（主 bundle gzip <200KB，总量 gzip <1MB）
+        run: npm run gate:size
+      - name: PWA 门禁（manifest / sw.js / 注册代码）
+        run: npm run gate:pwa
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # E2E 三条关键路径属 M1/M2 交付物（定稿 §2.5）；M0 无 spec，本 job 全部跳过。
+      # spec 落进来（tests/e2e/**/*.spec.ts）后下面的步骤自动生效。
+      - run: npm ci
+        if: ${{ hashFiles('tests/e2e/**/*.spec.ts') != '' }}
+      - run: npx playwright install --with-deps chromium
+        if: ${{ hashFiles('tests/e2e/**/*.spec.ts') != '' }}
+      - run: npm run build
+        if: ${{ hashFiles('tests/e2e/**/*.spec.ts') != '' }}
+      - run: npx playwright test
+        if: ${{ hashFiles('tests/e2e/**/*.spec.ts') != '' }}
