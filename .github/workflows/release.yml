@@ -41,7 +41,7 @@ jobs:
       # 幂等：已是 gh-pages 源时此调用无副作用。
       - name: 确保 Pages 源指向 gh-pages
         run: |
-          curl -sf -X PATCH \
+          curl -sS -w "\nHTTP %{http_code}\n" -X PATCH \
             -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/pages" \
