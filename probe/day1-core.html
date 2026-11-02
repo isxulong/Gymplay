@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M-1 探针 Day1 · P8→P7→P1→P2</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Noto Sans SC", sans-serif; margin: 0 auto; max-width: 720px; padding: 12px 14px 60px; color: #1c1c1e; background: #f7f7f9; }
+  h1 { font-size: 1.25rem; margin: .4em 0 .2em; }
+  h2 { font-size: 1.05rem; margin: 1.6em 0 .4em; border-left: 4px solid #2f6fed; padding-left: 8px; }
+  section { background: #fff; border: 1px solid #e4e4e8; border-radius: 10px; padding: 10px 12px; margin-top: 14px; }
+  .notice { background: #fff8e6; border-color: #f0dfa8; font-size: .85rem; line-height: 1.6; }
+  .notice label { display: block; margin: 8px 0; font-weight: 600; }
+  input[type=file] { display: block; margin-top: 4px; font-size: .8rem; }
+  video { width: 100%; max-width: 320px; background: #000; border-radius: 6px; display: block; margin: 6px 0; }
+  button { font-size: .9rem; padding: 8px 12px; margin: 4px 4px 4px 0; border: 1px solid #c9c9d0; background: #fff; border-radius: 8px; }
+  button.primary { background: #2f6fed; border-color: #2f6fed; color: #fff; }
+  button:disabled { opacity: .45; }
+  pre { background: #111; color: #9fe89f; font-size: .72rem; line-height: 1.45; padding: 8px 10px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; }
+  .verdict { font-weight: 700; }
+  .ok { color: #0a7d24; } .bad { color: #c22020; }
+  .hint { font-size: .8rem; color: #555; line-height: 1.6; }
+  .tag { display: inline-block; background: #eef3ff; color: #2f6fed; border-radius: 6px; padding: 1px 8px; font-size: .75rem; margin-left: 6px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+</style>
+</head>
+<body>
+
+<h1>M-1 探针 · Day 1 核心四项</h1>
+<p class="hint">顺序：P8 → P7 → P1 → P2（与《综合方案修订定稿 v2》§3.3 执行顺序一致）。每完成一节截图一节。</p>
+
+<section class="notice">
+  <b>素材要求（全部从本机选择，不上传到任何服务器）：</b>
+  <label>素材 A · 主视频：1~3 分钟真人讲解健身视频一段（H.264/AAC 编码 mp4）
+    <input type="file" id="fileA" accept="video/*">
+  </label>
+  <label>素材 B · 第二段视频（P2 场景 B 需要，选一段<b>不同</b>的视频即可，建议同规格）
+    <input type="file" id="fileB" accept="video/*">
+  </label>
+  <div id="fileStatus">尚未选择素材。</div>
+</section>
+
+<!-- ================= P8 ================= -->
+<section id="sec-p8">
+  <h2>P8 · playsinline 内联播放 <span class="tag">地基级</span></h2>
+  <p class="hint">两个 video，一个带 <code>playsinline</code>、一个不带。各点一次播放，观察哪个被强制全屏、哪个页内播放。判定（人工观察）：带 playsinline → 页内播放；不带 → 强制全屏。</p>
+  <div class="row">
+    <span>带 playsinline：</span>
+    <video id="p8a" playsinline muted></video>
+    <button id="p8aPlay" class="primary">▶ 播放（带 playsinline）</button>
+  </div>
+  <div class="row">
+    <span>不带 playsinline：</span>
+    <video id="p8b" muted></video>
+    <button id="p8bPlay" class="primary">▶ 播放（不带）</button>
+  </div>
+  <button id="p8Stop">⏹ 停止两个</button>
+  <button id="p8VerdictOk" onclick="p8Verdict(true)">记录结论：带内联 / 不带全屏（符合预期）</button>
+  <button id="p8VerdictBad" onclick="p8Verdict(false)">记录结论：与预期不符（描述现象）</button>
+  <pre id="p8out"></pre>
+</section>
+
+<!-- ================= P7 ================= -->
+<section id="sec-p7">
+  <h2>P7 · 手势要求 + 后台节流 <span class="tag">地基级</span></h2>
+  <video id="p7v" playsinline controls></video>
+  <p class="hint"><b>P7-A 无手势 play()：</b>选好素材后点按钮，随后 <b>10 秒内不要触碰屏幕</b>，页面会自动尝试 play()。预期被拒（NotAllowedError）→ 约束确认（交互必须点按启动）。</p>
+  <div class="row"><button id="p7aStart" class="primary">① 开始 P7-A（10 秒倒计时后自动尝试播放）</button><span id="p7aCount"></span></div>
+  <p class="hint"><b>P7-B 后台节流：</b>点按钮开始播放后<b>立刻切后台</b>（回主屏或切别的 App），<b>静置 60 秒</b>再切回。页面统计 setInterval(50) 实际触发次数与 currentTime 推进。</p>
+  <div class="row"><button id="p7bStart" class="primary">② 开始 P7-B（随后立刻切后台 60 秒）</button></div>
+  <pre id="p7out"></pre>
+</section>
+
+<!-- ================= P1 ================= -->
+<section id="sec-p1">
+  <h2>P1 · rVFC 真机行为（动态阈值版） <span class="tag">地基级</span></h2>
+  <p class="hint">修订口径（定稿 §3.2）：先在 1x 播放 10 秒<b>实测素材帧率</b>，阈值 = 实测帧率 × 10s × 0.8；再在 2x 播放 10 秒，对比 rVFC 计数是否 ≥ 阈值。同页顺带记录 timeupdate 与 setInterval(50) 兜底链路的实际频率。全程停留本页、不要触碰。</p>
+  <video id="p1v" playsinline muted loop controls></video>
+  <div class="row"><button id="p1Start" class="primary">P1 开始（1x 实测 10s → 2x 对比 10s）</button></div>
+  <pre id="p1out"></pre>
+</section>
+
+<!-- ================= P2 ================= -->
+<section id="sec-p2">
+  <h2>P2 · seek / 换源冻结 <span class="tag">地基级 · 最高优先级</span></h2>
+  <p class="hint">场景 A：同一文件内随机 seek 20 次；场景 B：两文件交替换源后立即 seek，共 20 次。每次 seek 与 <code>seeked</code> 事件竞速，3 秒超时判冻结。判定：两场景各 20 次全部 ≤500ms 完成且能续播 → 通过；出现 ≥1 次 &gt;3s 或画面冻结 → 复现。设备要求：iOS 18.4+ 真机（必须），另加一台较低 iOS 版本对照。</p>
+  <video id="p2v" playsinline controls></video>
+  <div class="row">
+    <button id="p2RunA" class="primary">场景 A：同文件 seek ×20</button>
+    <button id="p2RunB" class="primary">场景 B：两文件交替换源 ×20</button>
+  </div>
+  <div class="row">
+    <button id="p2Play">▶ 续播确认（应出声出画面）</button>
+    <button id="p2VerdictOk" onclick="p2Verdict(true)">记录：两个场景都能正常续播</button>
+    <button id="p2VerdictBad" onclick="p2Verdict(false)">记录：无法正常续播（描述现象）</button>
+  </div>
+  <pre id="p2out"></pre>
+</section>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  function mkLog(outId) {
+    var el = $(outId);
+    return function (s, cls) {
+      var line = document.createElement('div');
+      line.textContent = s;
+      if (cls) line.className = cls;
+      el.appendChild(line);
+      el.scrollTop = el.scrollHeight;
+    };
+  }
+  function once(el, ev) { return new Promise(function (r) { el.addEventListener(ev, r, { once: true }); }); }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function now() { return performance.now(); }
+  function ts() { return new Date().toTimeString().slice(0, 8); }
+
+  var urlA = null, urlB = null;
+
+  $('fileA').addEventListener('change', function (e) {
+    if (e.target.files && e.target.files[0]) {
+      urlA = URL.createObjectURL(e.target.files[0]);
+      ['p8a', 'p8b', 'p7v', 'p1v', 'p2v'].forEach(function (id) { $(id).src = urlA; });
+      $('fileStatus').textContent = '素材 A 已就绪：' + e.target.files[0].name + (urlB ? '；素材 B 已就绪' : '；素材 B 未选');
+    }
+  });
+  $('fileB').addEventListener('change', function (e) {
+    if (e.target.files && e.target.files[0]) {
+      urlB = URL.createObjectURL(e.target.files[0]);
+      $('fileStatus').textContent = '素材 B 已就绪：' + e.target.files[0].name + (urlA ? '；素材 A 已就绪' : '；素材 A 未选');
+    }
+  });
+
+  /* ---------------- P8 ---------------- */
+  var p8log = mkLog('p8out');
+  p8log('[' + ts() + '] P8 就绪。等待素材 A。');
+  function watchPresent(id, label) {
+    var v = $(id);
+    v.addEventListener('webkitpresentationmodechanged', function () {
+      p8log(label + ' presentationMode → ' + (v.webkitPresentationMode || '(无此属性)'));
+    });
+    v.addEventListener('fullscreenchange', function () {
+      p8log(label + ' fullscreen 元素：' + (document.fullscreenElement ? '进入' : '退出'));
+    });
+  }
+  watchPresent('p8a', '带 playsinline');
+  watchPresent('p8b', '不带 playsinline');
+  $('p8aPlay').onclick = function () {
+    var v = $('p8a'); v.currentTime = 0;
+    v.play().then(function () { p8log('点击播放「带 playsinline」→ 已开始，请观察是否页内播放'); })
+      .catch(function (err) { p8log('播放被拒：' + err.name + ' ' + (err.message || ''), 'bad'); });
+  };
+  $('p8bPlay').onclick = function () {
+    var v = $('p8b'); v.currentTime = 0;
+    v.play().then(function () { p8log('点击播放「不带 playsinline」→ 已开始，请观察是否被强制全屏'); })
+      .catch(function (err) { p8log('播放被拒：' + err.name + ' ' + (err.message || ''), 'bad'); });
+  };
+  $('p8Stop').onclick = function () { $('p8a').pause(); $('p8b').pause(); };
+  window.p8Verdict = function (ok) {
+    p8log('人工结论：' + (ok ? '带 playsinline 页内播放 / 不带强制全屏 —— R8 约束确认，playsinline 写进工程规范' : '与预期不符，请截图并描述现象'), ok ? 'ok' : 'bad');
+  };
+
+  /* ---------------- P7 ---------------- */
+  var p7log = mkLog('p7out');
+  p7log('[' + ts() + '] P7 就绪。');
+  $('p7aStart').onclick = async function () {
+    var v = $('p7v');
+    if (!v.src) { p7log('请先选择素材 A', 'bad'); return; }
+    $('p7aStart').disabled = true;
+    for (var i = 10; i > 0; i--) { $('p7aCount').textContent = '  ' + i + ' 秒后自动尝试播放（请勿触碰屏幕）'; await sleep(1000); }
+    $('p7aCount').textContent = '';
+    try {
+      await v.play();
+      p7log('P7-A：无手势 play() 未被拒（本环境下自动播放被允许），记录此现象', 'bad');
+      v.pause();
+    } catch (err) {
+      p7log('P7-A：play() 被拒绝：' + err.name + '（' + (err.message || '') + '）→ 手势约束确认，交互架构定为「首次点按解锁」', 'ok');
+    }
+    $('p7aStart').disabled = false;
+  };
+
+  var p7b = { active: false, iv: 0, ivId: null, hiddenAt: null, ctAtHidden: null, t0: null };
+  $('p7bStart').onclick = async function () {
+    var v = $('p7v');
+    if (!v.src) { p7log('请先选择素材 A', 'bad'); return; }
+    p7b.active = true; p7b.iv = 0; p7b.hiddenAt = null;
+    p7b.t0 = Date.now();
+    if (p7b.ivId) clearInterval(p7b.ivId);
+    p7b.ivId = setInterval(function () { p7b.iv++; }, 50);
+    await v.play();
+    p7log('[' + ts() + '] P7-B 开始：现在请立刻切后台（回主屏/切别的 App），静置 60 秒后切回本页。');
+  };
+  document.addEventListener('visibilitychange', function () {
+    if (!p7b.active) return;
+    var v = $('p7v');
+    if (document.hidden) {
+      p7b.hiddenAt = Date.now();
+      p7b.ctAtHidden = v.currentTime;
+    } else if (p7b.hiddenAt) {
+      var hiddenMs = Date.now() - p7b.hiddenAt;
+      var expected = Math.round(hiddenMs / 50);
+      var ctDelta = v.currentTime - p7b.ctAtHidden;
+      p7log('[' + ts() + '] P7-B 回到前台：');
+      p7log('  后台时长：' + (hiddenMs / 1000).toFixed(1) + ' 秒');
+      p7log('  setInterval(50) 实际触发：' + p7b.iv + ' 次（按后台时长理论值 ' + expected + ' 次；实测频率约 ' + (p7b.iv / (hiddenMs / 1000)).toFixed(2) + ' Hz，理论 20 Hz）');
+      p7log('  currentTime 后台推进：' + ctDelta.toFixed(2) + ' 秒' + (ctDelta > 0.01 ? '（>0：后台仍在连播）' : '（≈0：后台播放被暂停/冻结）'));
+      p7log('  请补充人工观察：后台期间是否仍能听到声音？');
+      p7b.active = false;
+      if (p7b.ivId) { clearInterval(p7b.ivId); p7b.ivId = null; }
+    }
+  });
+
+  /* ---------------- P1 ---------------- */
+  var p1log = mkLog('p1out');
+  p1log('[' + ts() + '] P1 就绪。rVFC 存在：' + ('requestVideoFrameCallback' in HTMLVideoElement.prototype));
+  var p1Running = false;
+  var p1Count = { rvfc: 0, tu: 0, iv: 0 };
+
+  function p1Phase(rate, seconds) {
+    return new Promise(function (resolve) {
+      var v = $('p1v');
+      p1Count = { rvfc: 0, tu: 0, iv: 0 };
+      var ivId = setInterval(function () { p1Count.iv++; }, 50);
+      var tuFn = function () { p1Count.tu++; };
+      v.addEventListener('timeupdate', tuFn);
+      v.playbackRate = rate;
+      var loopId = null;
+      function tick() {
+        p1Count.rvfc++;
+        loopId = v.requestVideoFrameCallback(tick);
+      }
+      v.play().then(function () {
+        loopId = v.requestVideoFrameCallback(tick);
+      }).catch(function (err) {
+        p1log('播放被拒：' + err.name + '，请重新点击开始', 'bad');
+        clearInterval(ivId);
+        resolve(null);
+      });
+      setTimeout(function () {
+        if (loopId !== null) { try { v.cancelVideoFrameCallback(loopId); } catch (e) {} }
+        clearInterval(ivId);
+        v.removeEventListener('timeupdate', tuFn);
+        v.pause();
+        resolve({ rvfc: p1Count.rvfc, tu: p1Count.tu, iv: p1Count.iv });
+      }, seconds * 1000);
+    });
+  }
+
+  $('p1Start').onclick = async function () {
+    var v = $('p1v');
+    if (!v.src) { p1log('请先选择素材 A', 'bad'); return; }
+    if (!('requestVideoFrameCallback' in HTMLVideoElement.prototype)) {
+      p1log('rVFC 不存在 → 主线不可用，调度器降级 50ms 轮询（判定：不通过）', 'bad');
+      return;
+    }
+    if (p1Running) return;
+    p1Running = true; $('p1Start').disabled = true;
+    p1log('[' + ts() + '] 阶段 1/2：1x 播放 10 秒，实测素材帧率……（请勿触碰屏幕）');
+    var r1 = await p1Phase(1, 10);
+    if (!r1) { p1Running = false; $('p1Start').disabled = false; return; }
+    var fps = r1.rvfc / 10;
+    var threshold = fps * 10 * 0.8;
+    p1log('  1x 10s：rVFC=' + r1.rvfc + ' 次（实测帧率 ' + fps.toFixed(1) + ' fps），timeupdate=' + r1.tu + ' 次，interval50=' + r1.iv + ' 次（' + (r1.iv / 10).toFixed(1) + ' Hz）');
+    p1log('  动态阈值 = 实测帧率 × 10s × 0.8 = ' + fps.toFixed(1) + ' × 10 × 0.8 = ' + threshold.toFixed(0) + ' 次');
+    await sleep(1000);
+    p1log('[' + ts() + '] 阶段 2/2：2x 播放 10 秒，对比 rVFC 计数……');
+    var r2 = await p1Phase(2, 10);
+    if (!r2) { p1Running = false; $('p1Start').disabled = false; return; }
+    p1log('  2x 10s：rVFC=' + r2.rvfc + ' 次，timeupdate=' + r2.tu + ' 次，interval50=' + r2.iv + ' 次（' + (r2.iv / 10).toFixed(1) + ' Hz）');
+    var pass = r2.rvfc >= threshold;
+    p1log('判定：2x rVFC ' + r2.rvfc + ' ' + (pass ? '≥' : '<') + ' 阈值 ' + threshold.toFixed(0) + ' → ' + (pass ? '通过（rVFC 与倍速联动正常）' : '不通过（rVFC 低于阈值或停发，调度器主线改走 50ms 轮询）'), pass ? 'ok' : 'bad');
+    p1Running = false; $('p1Start').disabled = false;
+  };
+
+  /* ---------------- P2 ---------------- */
+  var p2log = mkLog('p2out');
+  p2log('[' + ts() + '] P2 就绪。场景 A 需素材 A；场景 B 需素材 A 和 B。');
+  var p2Running = false;
+
+  async function p2EnsureLoaded(el, src) {
+    if (el.src !== src) {
+      el.src = src;
+      el.load();
+      await once(el, 'loadeddata');
+    }
+  }
+
+  async function trial(el, src, t) {
+    await p2EnsureLoaded(el, src);
+    var t0 = now();
+    el.currentTime = t;
+    var ok = await Promise.race([
+      once(el, 'seeked').then(function () { return true; }),
+      sleep(3000).then(function () { return false; })
+    ]);
+    return { ms: now() - t0, ok: ok };
+  }
+
+  function randomTime(dur) {
+    var lo = 0.5, hi = Math.max(0.6, dur - 1);
+    return lo + Math.random() * (hi - lo);
+  }
+
+  function p2Summary(results, label) {
+    var times = results.map(function (r) { return r.ms; });
+    var over500 = times.filter(function (m) { return m > 500; }).length;
+    var freeze = results.filter(function (r) { return !r.ok; }).length;
+    var maxMs = Math.max.apply(null, times);
+    p2log(label + ' 汇总：共 ' + results.length + ' 次；>500ms ' + over500 + ' 次；>3000ms（冻结）' + freeze + ' 次；最长 ' + maxMs.toFixed(0) + 'ms');
+    if (over500 === 0 && freeze === 0) {
+      p2log(label + ' 自动判定：全部 ≤500ms → 本场景通过（续播确认见下方按钮）', 'ok');
+    } else {
+      p2log(label + ' 自动判定：存在 >500ms 或冻结（>3s）→ 本场景复现 R2，需启用 fallback（详见定稿 §三.4 / 风险计划四章）', 'bad');
+    }
+  }
+
+  $('p2RunA').onclick = async function () {
+    var v = $('p2v');
+    if (!urlA) { p2log('请先选择素材 A', 'bad'); return; }
+    if (p2Running) return;
+    p2Running = true; $('p2RunA').disabled = true; $('p2RunB').disabled = true;
+    p2log('[' + ts() + '] 场景 A 开始：同文件内随机 seek 20 次……（期间请勿触碰屏幕）');
+    v.src = urlA; v.load();
+    await once(v, 'loadeddata');
+    var results = [];
+    for (var i = 0; i < 20; i++) {
+      var t = randomTime(v.duration);
+      var r = await trial(v, urlA, t);
+      results.push(r);
+      p2log('  #' + (i + 1) + ' seek@' + t.toFixed(1) + 's → ' + (r.ok ? r.ms.toFixed(0) + 'ms' : '冻结（>3000ms）'), r.ok ? (r.ms > 500 ? 'bad' : '') : 'bad');
+    }
+    p2Summary(results, '场景 A');
+    p2log('请点「▶ 续播确认」：应能继续出声出画面。');
+    p2Running = false; $('p2RunA').disabled = false; $('p2RunB').disabled = false;
+  };
+
+  $('p2RunB').onclick = async function () {
+    var v = $('p2v');
+    if (!urlA || !urlB) { p2log('场景 B 需要素材 A 和素材 B 都就绪', 'bad'); return; }
+    if (p2Running) return;
+    p2Running = true; $('p2RunA').disabled = true; $('p2RunB').disabled = true;
+    p2log('[' + ts() + '] 场景 B 开始：两文件交替换源 20 次（每次换源后立即随机 seek）……');
+    var results = [];
+    for (var i = 0; i < 20; i++) {
+      var src = (i % 2 === 0) ? urlA : urlB;
+      var t = randomTime(v.duration || 60);
+      if (v.src !== src) { v.src = src; v.load(); await once(v, 'loadeddata'); t = randomTime(v.duration); }
+      var t0 = now();
+      v.currentTime = t;
+      var ok = await Promise.race([
+        once(v, 'seeked').then(function () { return true; }),
+        sleep(3000).then(function () { return false; })
+      ]);
+      var r = { ms: now() - t0, ok: ok };
+      results.push(r);
+      p2log('  #' + (i + 1) + ' [' + (i % 2 === 0 ? 'A' : 'B') + '] seek@' + t.toFixed(1) + 's → ' + (r.ok ? r.ms.toFixed(0) + 'ms' : '冻结（>3000ms）'), r.ok ? (r.ms > 500 ? 'bad' : '') : 'bad');
+    }
+    p2Summary(results, '场景 B');
+    p2log('请点「▶ 续播确认」：应能继续出声出画面。');
+    p2Running = false; $('p2RunA').disabled = false; $('p2RunB').disabled = false;
+  };
+
+  $('p2Play').onclick = function () {
+    var v = $('p2v');
+    v.play().then(function () { p2log('已发起播放——请人工确认出声出画面后点记录按钮'); })
+      .catch(function (err) { p2log('播放被拒：' + err.name + ' ' + (err.message || ''), 'bad'); });
+  };
+  window.p2Verdict = function (ok) {
+    p2log('人工续播结论：' + (ok ? '能正常续播（出声出画面）' : '无法正常续播，请截图并描述现象'), ok ? 'ok' : 'bad');
+  };
+})();
+</script>
+</body>
+</html>
