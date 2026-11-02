@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M-1 探针 · P9 HEVC 解码</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Noto Sans SC", sans-serif; margin: 0 auto; max-width: 720px; padding: 12px 14px 60px; color: #1c1c1e; background: #f7f7f9; }
+  h1 { font-size: 1.2rem; margin: .4em 0 .2em; }
+  section { background: #fff; border: 1px solid #e4e4e8; border-radius: 10px; padding: 10px 12px; margin-top: 14px; }
+  .notice { background: #fff8e6; border-color: #f0dfa8; font-size: .85rem; line-height: 1.6; }
+  input[type=file] { display: block; margin-top: 4px; font-size: .8rem; }
+  video { width: 100%; max-width: 320px; background: #000; border-radius: 6px; display: block; margin: 6px 0; }
+  button { font-size: .9rem; padding: 8px 12px; margin: 4px 4px 4px 0; border: 1px solid #c9c9d0; background: #fff; border-radius: 8px; }
+  button.primary { background: #2f6fed; border-color: #2f6fed; color: #fff; }
+  pre { background: #111; color: #9fe89f; font-size: .74rem; line-height: 1.5; padding: 8px 10px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow-y: auto; }
+  .ok { color: #0a7d24; } .bad { color: #c22020; }
+  .hint { font-size: .8rem; color: #555; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<h1>M-1 探针 · P9 HEVC 素材解码</h1>
+<p class="hint">目的（R9）：iPhone 直出素材默认 HEVC，验证目标浏览器实际能否解码播放。判定：<b>canplay 且实际出画面出声 → 通过</b>；仅 canPlayType 报 maybe 但实际触发 error 或黑屏 → 不通过（导入时需 HEVC 预判引导）。设备：桌面 Chrome（最好找一台无 HEVC 硬解的机器）、安卓 Chrome、iPhone 对照。</p>
+
+<section class="notice">
+  <b>素材要求：</b>iPhone 直出 HEVC 视频一段（相机设置「高效」格式录制，或隔空投送/文件 App 导出的 .HEVC/.MOV）。
+  <input type="file" id="fileA" accept="video/*">
+  <div id="fileStatus">尚未选择素材。</div>
+</section>
+
+<section>
+  <h2 style="margin:.2em 0 .4em;font-size:1rem;">① canPlayType 静态探测（无需素材）</h2>
+  <pre id="p9cap"></pre>
+</section>
+
+<section>
+  <h2 style="margin:.2em 0 .4em;font-size:1rem;">② 实际加载 HEVC 文件</h2>
+  <video id="p9v" playsinline controls></video>
+  <button id="p9Play" class="primary">▶ 播放（手势启动）</button>
+  <button id="p9VerdictOk" onclick="p9Verdict(true)">记录：出画面、出声（通过）</button>
+  <button id="p9VerdictBad" onclick="p9Verdict(false)">记录：黑屏 / 无声 / 报错（不通过）</button>
+  <pre id="p9out"></pre>
+</section>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  function logTo(outId, s, cls) {
+    var el = $(outId);
+    var line = document.createElement('div');
+    line.textContent = s;
+    if (cls) line.className = cls;
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+  }
+  var cap = function (s, cls) { logTo('p9cap', s, cls); };
+  var out = function (s, cls) { logTo('p9out', s, cls); };
+
+  function display(v, s) { return s === '' ? '（空串，明确不支持）' : s; }
+
+  var v0 = document.createElement('video');
+  var probe = 'video/mp4; codecs="hev1.1.6.L93.B0"';
+  cap('canPlayType(\'' + probe + '\') → ' + display(v0, v0.canPlayType(probe)));
+  cap('canPlayType(\'video/mp4; codecs="hvc1.1.6.L93.B0"\') → ' + display(v0, v0.canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"')) + '（附加参考：iPhone 直出常见 hvc1 封装）');
+  cap('canPlayType(\'video/mp4; codecs="avc1.42E01E"\') → ' + display(v0, v0.canPlayType('video/mp4; codecs="avc1.42E01E"')) + '（附加参考：H.264 基线对照）');
+  cap('说明：\'\'（空）=明确不支持；\'maybe\'=声称可能支持，须实际加载确认；\'probably\'=大概率支持。');
+
+  $('fileA').addEventListener('change', function (e) {
+    var f = e.target.files && e.target.files[0];
+    if (!f) return;
+    var v = $('p9v');
+    var url = URL.createObjectURL(f);
+    $('fileStatus').textContent = '素材已就绪：' + f.name + '（' + (f.size / 1048576).toFixed(1) + ' MB，type=' + (f.type || '未知') + '）';
+    out('开始实际加载：' + f.name);
+    v.src = url;
+    v.load();
+  });
+
+  var v = $('p9v');
+  v.addEventListener('loadedmetadata', function () {
+    out('loadedmetadata：时长 ' + v.duration.toFixed(2) + 's，尺寸 ' + v.videoWidth + '×' + v.videoHeight);
+  });
+  v.addEventListener('canplay', function () { out('canplay 事件已触发（声称可播）'); });
+  v.addEventListener('loadeddata', function () { out('loadeddata 事件已触发'); });
+  v.addEventListener('error', function () {
+    var e = v.error;
+    var codeMap = { 1: 'MEDIA_ERR_ABORTED', 2: 'MEDIA_ERR_NETWORK', 3: 'MEDIA_ERR_DECODE', 4: 'MEDIA_ERR_SRC_NOT_SUPPORTED' };
+    out('error 事件：' + (e ? (codeMap[e.code] || ('code=' + e.code)) + ' ' + (e.message || '') : '未知错误'), 'bad');
+    out('→ 判定：实际加载失败，HEVC 不支持（不通过）。导入时启用 HEVC 预判引导「该视频为 HEVC 编码，当前浏览器不支持，请转 H.264 后导入」', 'bad');
+  });
+
+  $('p9Play').onclick = function () {
+    var p = v.play();
+    if (p && p.catch) p.catch(function (err) { out('播放被拒：' + err.name + ' ' + (err.message || ''), 'bad'); });
+  };
+
+  window.p9Verdict = function (ok) {
+    out('人工结论：' + (ok
+      ? '出画面、出声 → P9 通过（该浏览器可直读 iPhone 直出 HEVC）'
+      : '黑屏/无声/报错 → P9 不通过，请截图 error 日志并描述现象'), ok ? 'ok' : 'bad');
+    if (ok) {
+      var canplayState = v.readyState;
+      out('（readyState=' + canplayState + '，videoWidth=' + v.videoWidth + '，duration=' + (v.duration || '?') + '）');
+    }
+  };
+})();
+</script>
+</body>
+</html>
