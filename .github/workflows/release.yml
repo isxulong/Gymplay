@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # gh-pages 分支推送（peaceiris/actions-gh-pages）
+      pages: write # 确保 Pages 源指向 gh-pages（幂等）
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -35,6 +36,16 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./dist
+
+      # Pages 源需指向 gh-pages 分支（应用本体为构建产物，probe/ 已随产物打包）。
+      # 幂等：已是 gh-pages 源时此调用无副作用。
+      - name: 确保 Pages 源指向 gh-pages
+        run: |
+          curl -sf -X PATCH \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/pages" \
+            -d '{"source":{"branch":"gh-pages","path":"/"}}'
 
       - name: 部署 Cloudflare Pages 主站
         if: ${{ vars.CLOUDFLARE_DEPLOY_ENABLED == 'true' }}
