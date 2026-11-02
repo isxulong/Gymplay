@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,"><!-- 空favicon，避免浏览器自动请求 /favicon.ico 产生 404 控制台噪音 -->
+<title>M-1 探针 · P11 Screen Wake Lock</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "PingFang SC", "Noto Sans SC", sans-serif; margin: 0 auto; max-width: 720px; padding: 12px 14px 60px; color: #1c1c1e; background: #f7f7f9; }
+  h1 { font-size: 1.2rem; margin: .4em 0 .2em; }
+  section { background: #fff; border: 1px solid #e4e4e8; border-radius: 10px; padding: 10px 12px; margin-top: 14px; }
+  .notice { background: #fff8e6; border-color: #f0dfa8; font-size: .85rem; line-height: 1.6; }
+  input[type=file] { display: block; margin-top: 4px; font-size: .8rem; }
+  video { width: 100%; max-width: 320px; background: #000; border-radius: 6px; display: block; margin: 6px 0; }
+  button { font-size: .9rem; padding: 8px 12px; margin: 4px 4px 4px 0; border: 1px solid #c9c9d0; background: #fff; border-radius: 8px; }
+  button.primary { background: #2f6fed; border-color: #2f6fed; color: #fff; }
+  button:disabled { opacity: .45; }
+  pre { background: #111; color: #9fe89f; font-size: .74rem; line-height: 1.5; padding: 8px 10px; border-radius: 8px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; }
+  .ok { color: #0a7d24; } .bad { color: #c22020; }
+  .hint { font-size: .8rem; color: #555; line-height: 1.6; }
+  #countdown { font-size: 2.4rem; font-weight: 800; text-align: center; margin: 10px 0; font-variant-numeric: tabular-nums; }
+  .fallback { display: none; background: #fff3f3; border: 1px solid #f0c9c9; border-radius: 8px; padding: 8px 12px; margin-top: 8px; font-size: .85rem; }
+</style>
+</head>
+<body>
+
+<h1>M-1 探针 · P11 Screen Wake Lock（屏幕常亮）</h1>
+<p class="hint">目的（R12 / F6 AC5）：播放中请求 <code>navigator.wakeLock.request('screen')</code>，<b>静置 5 分钟不触碰</b>。判定：5 分钟未锁屏 → 通过；API 不存在或请求被拒 → 记录现象，走文案 D fallback：「当前浏览器不支持自动保持亮屏。训练期间请在系统设置中将『自动锁定』调长，避免播放中断。」。设备：<b>iPhone + Android 各一台</b>。iOS 16.4+ 支持性属<b>待验断言</b>，以本探针实测为准。</p>
+
+<section class="notice">
+  <b>素材要求：</b>任意可播放视频（建议用 1~3 分钟讲解健身视频，循环播放）。
+  <input type="file" id="fileA" accept="video/*">
+  <div id="fileStatus">尚未选择素材。</div>
+</section>
+
+<section>
+  <video id="p11v" playsinline loop controls muted></video>
+  <button id="p11Start" class="primary">开始 P11 测试（请求 Wake Lock + 播放 + 5 分钟倒计时）</button>
+  <button id="p11Stop">停止并释放</button>
+  <div id="countdown">05:00</div>
+  <div class="hint" id="p11hint">点击开始后：<b>5 分钟内不要触碰屏幕、不要切后台</b>。倒计时结束后记录屏幕是否仍未锁屏。</div>
+  <div class="fallback" id="fallbackD">文案 D fallback：「当前浏览器不支持自动保持亮屏。训练期间请在系统设置中将『自动锁定』调长，避免播放中断。」</div>
+  <div>
+    <button id="p11VerdictOk" onclick="p11Verdict(true)">记录：5 分钟未锁屏（通过）</button>
+    <button id="p11VerdictBad" onclick="p11Verdict(false)">记录：中途锁屏（不通过，走文案 D）</button>
+  </div>
+  <pre id="p11out"></pre>
+</section>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  function log(s, cls) {
+    var el = $('p11out');
+    var line = document.createElement('div');
+    line.textContent = s;
+    if (cls) line.className = cls;
+    el.appendChild(line);
+    el.scrollTop = el.scrollHeight;
+  }
+  function ts() { return new Date().toTimeString().slice(0, 8); }
+
+  var lock = null;
+  var timerId = null;
+  var testing = false;
+
+  $('fileA').addEventListener('change', function (e) {
+    if (e.target.files && e.target.files[0]) {
+      var v = $('p11v');
+      v.src = URL.createObjectURL(e.target.files[0]);
+      $('fileStatus').textContent = '素材已就绪：' + e.target.files[0].name;
+    }
+  });
+
+  log('[' + ts() + '] P11 就绪。');
+  log('navigator.wakeLock 存在：' + ('wakeLock' in navigator));
+  if (!('wakeLock' in navigator)) {
+    log('API 不存在 → 判定：不通过，启用文案 D fallback（记录 UA：' + navigator.userAgent.slice(0, 120) + '）', 'bad');
+    $('fallbackD').style.display = 'block';
+  }
+
+  async function requestLock() {
+    if (!('wakeLock' in navigator)) return;
+    try {
+      lock = await navigator.wakeLock.request('screen');
+      log('[' + ts() + '] wakeLock 请求成功（type=screen，active=' + lock.active + '）', 'ok');
+      $('fallbackD').style.display = 'none';
+      lock.addEventListener('release', function () {
+        log('[' + ts() + '] wakeLock released 事件（通常因页面切到后台被系统释放）');
+      });
+    } catch (err) {
+      log('[' + ts() + '] wakeLock 请求被拒：' + err.name + '（' + (err.message || '') + '）→ 记录现象，走文案 D fallback', 'bad');
+      $('fallbackD').style.display = 'block';
+    }
+  }
+
+  $('p11Start').onclick = async function () {
+    var v = $('p11v');
+    if (!v.src) { log('请先选择素材', 'bad'); return; }
+    if (testing) return;
+    testing = true;
+    $('p11Start').disabled = true;
+    await requestLock();
+    try {
+      await v.play();
+      log('[' + ts() + '] 视频开始播放。现在静置 5 分钟：不要触碰屏幕、不要切后台。');
+    } catch (err) {
+      log('播放被拒：' + err.name + ' ' + (err.message || ''), 'bad');
+      testing = false; $('p11Start').disabled = false;
+      return;
+    }
+    var remain = 300;
+    $('countdown').textContent = '05:00';
+    timerId = setInterval(function () {
+      remain--;
+      var mm = String(Math.floor(remain / 60)).padStart(2, '0');
+      var ss = String(remain % 60).padStart(2, '0');
+      $('countdown').textContent = mm + ':' + ss;
+      if (remain <= 0) {
+        clearInterval(timerId); timerId = null;
+        log('[' + ts() + '] 5 分钟静置结束——请确认：屏幕仍未锁屏？视频是否仍在播放？然后点下方对应按钮记录结论。');
+        log('（若此时 wakeLock.active=' + (lock ? '见日志' : '不可用') + '，请一并截图）');
+      }
+    }, 1000);
+  };
+
+  $('p11Stop').onclick = function () {
+    if (timerId) { clearInterval(timerId); timerId = null; }
+    $('p11v').pause();
+    if (lock) {
+      try { lock.release().then(function () { log('[' + ts() + '] wakeLock 已手动释放'); }); } catch (e) { log('释放失败：' + e); }
+      lock = null;
+    }
+    testing = false;
+    $('p11Start').disabled = false;
+    $('countdown').textContent = '05:00';
+  };
+
+  // 页面重新可见时若锁已被释放且仍在测试中，重新请求（真实练时模式的行为模式）
+  document.addEventListener('visibilitychange', function () {
+    if (!testing) return;
+    if (!document.hidden) {
+      log('[' + ts() + '] 回到前台，检查 wakeLock 状态：active=' + (lock ? lock.active : '(无锁对象)'));
+      if (lock && !lock.active) {
+        log('锁已释放，尝试重新请求……');
+        requestLock();
+      }
+    } else {
+      log('[' + ts() + '] 页面进入后台（注意：P11 要求静置期间不切后台，此日志出现说明中途切过）');
+    }
+  });
+
+  window.p11Verdict = function (ok) {
+    log('人工结论：' + (ok
+      ? '5 分钟静置未锁屏 → P11 通过（Screen Wake Lock 生效，iOS 16.4+ 支持断言在本机成立）'
+      : '中途锁屏 / API 不可用 → P11 不通过，走文案 D fallback（R12 落地：提示用户调长『自动锁定』）'), ok ? 'ok' : 'bad');
+  };
+})();
+</script>
+</body>
+</html>
