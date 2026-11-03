@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:,"><!-- 空favicon，避免浏览器自动请求 /favicon.ico 产生 404 控制台噪音 -->
-<title>M-1 探针 · P10 配置 URL 长度</title>
+<title>M-1 探针 · P10 配置 URL 长度（产线管线）</title>
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
@@ -26,11 +26,11 @@
 </head>
 <body>
 
-<h1>M-1 探针 · P10 配置 URL 长度（10/30/50/80 段）</h1>
-<p class="hint">目的（R10）：构造 10 / 30 / 50 / 80 段的典型配置 JSON（Schema v1），pako deflate + base64url 编码进 <code>location.hash</code>（<code>#c=…</code>），显示各档 URL 总长并生成可复制链接。<b>判定线 = 降级线 = 80 段 URL ≤ 1500 字符</b>（定稿 §3.2 阈值统一，原 2000 作废）：达标且主流分享渠道不截断 → 通过；超阈值 → 分享降级为导出 .json 配置文件（exportConfig）。建议把 80 档链接通过微信、系统分享面板实际发送一遍，记录是否截断。设备：桌面 + 手机各一。</p>
+<h1>M-1 探针 · P10 配置 URL 长度（10/25/50/80/100/150 段 · 产线管线）</h1>
+<p class="hint">目的（R10）：构造 10 / 25 / 50 / 80 / 100 / 150 段的典型配置（Schema v1），用<b>与产线完全一致的压缩管线</b>——canonicalize（键名字典序、无空白）＋ pako deflate level 9 ＋ base64url，逐行对齐 <code>src/core/config/codec.ts</code> 的 encodeConfig——编码进 <code>location.hash</code>（<code>#c=…</code>），显示各档 URL 总长并生成可复制链接。<b>判定线 = 降级线 = 1500 字符</b>（定稿 §3.2 阈值统一，原 2000 作废）：达标且主流分享渠道不截断 → 通过；超阈值 → 分享降级为导出 .json 配置文件（exportConfig）。建议把边界档链接通过微信、系统分享面板实际发送一遍，记录是否截断。设备：桌面 + 手机各一。</p>
 
 <section>
-  <button id="gen" class="primary">生成四档配置并计算长度</button>
+  <button id="gen" class="primary">生成六档配置并计算长度</button>
   <button id="copyAll">复制 80 档完整链接</button>
   <div id="p10table"></div>
   <pre id="p10out"></pre>
@@ -60,11 +60,28 @@
     return;
   }
 
-  /* ---------- base64url 编解码 ---------- */
+  /* ---------- 产线编码管线（与 src/core/config/codec.ts 逐行对齐，代码 diff 可核） ----------
+   * 以下 canonicalize / B64_CHUNK / bytesToB64url 三段为 codec.ts 同名实现的原样移植；
+   * encodeConfig 底部的组合顺序（canonicalize → deflate level 9 → base64url）
+   * 与 codec.ts 的 encodeConfig 完全一致。改动任一处须同步 codec.ts。 */
+
+  // 原样移植自 codec.ts canonicalize（规范化序列化：键名字典序、无空白）
+  function canonicalize(value) {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) return `[${value.map(canonicalize).join(',')}]`;
+    const rec = value;
+    const keys = Object.keys(rec).filter((k) => rec[k] !== undefined).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalize(rec[k])}`).join(',')}}`;
+  }
+
+  // 原样移植自 codec.ts bytesToBase64Url（分块转 base64url、去填充）
+  const B64_CHUNK = 0x8000;
   function bytesToB64url(bytes) {
-    var bin = '';
-    for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += B64_CHUNK) {
+      bin += String.fromCharCode(...bytes.subarray(i, i + B64_CHUNK));
+    }
+    return btoa(bin).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
   }
   function b64urlToBytes(s) {
     var b64 = s.replace(/-/g, '+').replace(/_/g, '/');
@@ -93,7 +110,7 @@
         start: Math.round(i * segLen * 100) / 100,
         end: Math.round((i + 1) * segLen * 100) / 100,
         rate: RATES[i % RATES.length],
-        label: '段' + (i < 10 ? '0' : '') + (i + 1),
+        label: '段' + String(i + 1).padStart(2, '0'), // 补零到两位（原 (i<10?'0':'') 写法在第 10 段会产出「段010」，已修正）
         inQueue: true
       });
       sequence.push(id);
@@ -109,9 +126,9 @@
   }
 
   function encodeConfig(cfg) {
-    var json = JSON.stringify(cfg);
-    var deflated = window.pako.deflate(json); // Uint8Array（zlib deflate）
-    var b64url = bytesToB64url(deflated);
+    var json = canonicalize(cfg);                            // 产线：canonicalize（与 codec.ts 同名函数）
+    var deflated = window.pako.deflate(json, { level: 9 });  // 产线：deflate level 9（codec.ts encodeConfig）
+    var b64url = bytesToB64url(deflated);                    // 产线：base64url（codec.ts bytesToBase64Url）
     return { json: json, bytes: deflated, b64url: b64url };
   }
 
@@ -120,7 +137,7 @@
     return JSON.parse(json);
   }
 
-  var TIERS = [10, 30, 50, 80];
+  var TIERS = [10, 25, 50, 80, 100, 150];
   var encoded = {};
 
   $('gen').onclick = function () {
@@ -131,17 +148,17 @@
     TIERS.forEach(function (n) {
       var cfg = buildConfig(n);
       var enc = encodeConfig(cfg);
-      // round-trip 自检：解压回来应与原 JSON 完全一致
+      // round-trip 自检：解压回来的配置重新规范化后应与编码前 canonical JSON 完全一致
       var back = decodeConfig(enc.b64url);
-      var rt = JSON.stringify(back) === enc.json;
+      var rt = canonicalize(back) === enc.json;
       var total = baseURL.length + 3 + enc.b64url.length; // '#c='
       var pass = total <= 1500;
       if (!pass) allPass = false;
       encoded[n] = enc;
-      log(n + ' 段：JSON ' + enc.json.length + ' 字符 → deflate ' + enc.bytes.length + ' 字节 → base64url ' + enc.b64url.length + ' 字符；URL 总长 ' + total + ' 字符 ' + (pass ? '≤' : '>') + ' 1500' + (rt ? '（round-trip 校验通过）' : '（round-trip 失败！）'), rt ? (pass ? 'ok' : 'bad') : 'bad');
+      log(n + ' 段：canonical JSON ' + enc.json.length + ' 字符 → deflate(level 9) ' + enc.bytes.length + ' 字节 → base64url ' + enc.b64url.length + ' 字符；URL 总长 ' + total + ' 字符 ' + (pass ? '≤' : '>') + ' 1500' + (rt ? '（round-trip 校验通过）' : '（round-trip 失败！）'), rt ? (pass ? 'ok' : 'bad') : 'bad');
       rows.push({ n: n, json: enc.json.length, bytes: enc.bytes.length, b64: enc.b64url.length, total: total, pass: pass, link: baseURL + '#c=' + enc.b64url });
     });
-    var html = '<table><tr><th>档位</th><th>JSON 字符</th><th>deflate 字节</th><th>base64url 字符</th><th>URL 总长</th><th>≤1500</th><th>操作</th><th>链接预览</th></tr>';
+    var html = '<table><tr><th>档位</th><th>canonical JSON 字符</th><th>deflate(level 9) 字节</th><th>base64url 字符</th><th>URL 总长</th><th>≤1500</th><th>操作</th><th>链接预览</th></tr>';
     rows.forEach(function (r) {
       html += '<tr><td class="tier">' + r.n + ' 段</td><td>' + r.json + '</td><td>' + r.bytes + '</td><td>' + r.b64 + '</td><td>' + r.total + '</td><td class="' + (r.pass ? 'pass">✅' : 'fail">❌') + '</td>' +
         '<td><button data-n="' + r.n + '" class="apply">写入地址栏</button> <button data-n="' + r.n + '" class="copy">复制</button></td>' +
@@ -168,12 +185,12 @@
         }
       };
     });
-    log(allPass ? '自动判定：四档全部 ≤1500 → P10 通过（仍建议人工用微信/系统分享面板实际发送 80 档验证不被截断）'
-                : '自动判定：存在 >1500 档 → P10 不通过，分享降级为导出 .json 配置文件（exportConfig）', allPass ? 'ok' : 'bad');
+    log(allPass ? '自动判定：各档全部 ≤1500 → P10 通过（仍建议人工用微信/系统分享面板实际发送边界档验证不被截断）'
+                : '自动判定：存在 >1500 档 → P10 不通过，超线档分享降级为导出 .json 配置文件（exportConfig）', allPass ? 'ok' : 'bad');
   };
 
   $('copyAll').onclick = function () {
-    if (!encoded[80]) { log('请先点「生成四档配置并计算长度」', 'bad'); return; }
+    if (!encoded[80]) { log('请先点「生成六档配置并计算长度」', 'bad'); return; }
     var link = location.href.split('#')[0] + '#c=' + encoded[80].b64url;
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(link).then(function () { log('80 档完整链接已复制（' + link.length + ' 字符）——建议粘贴到微信发送给自己，验证是否被截断', 'ok'); })
@@ -193,7 +210,7 @@
     }
   }
 
-  log('P10 就绪：pako 已内联（无需网络）。点击「生成四档配置并计算长度」开始。');
+  log('P10 就绪：pako 已内联（无需网络）。点击「生成六档配置并计算长度」开始。');
 })();
 </script>
 </body>
