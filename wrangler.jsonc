@@ -1,0 +1,9 @@
+{
+  // Gymplay 是纯静态 PWA（构建产物在 dist/），无需 Worker 脚本。
+  // 显式提供本文件以避免 wrangler 进入框架自动配置模式（该模式要求 Vite >= 6）。
+  "name": "gymplay",
+  "compatibility_date": "2026-11-03",
+  "assets": {
+    "directory": "./dist"
+  }
+}
