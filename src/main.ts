@@ -16,6 +16,7 @@ import { createEditorController } from './app/controller';
 import type { AppMode } from './app/state';
 import { createEditorView } from './ui/editor';
 import { createCockpitView } from './ui/cockpit';
+import { setupSwUpdatePrompt } from './ui/sw-update';
 import { h } from './ui/dom';
 
 const { store, persistence } = bootstrap();
@@ -52,11 +53,5 @@ if (rootEl) {
   });
 }
 
-// PWA：注册 Service Worker（仅 cache-first 缓存 app shell 静态资产，定稿 §2.7）
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch(() => {
-      // 注册失败不阻塞使用（如隐私模式）
-    });
-  });
-}
+// PWA：注册 SW + 「刷新即更新」提示接线（定稿 §2.7，设计见 ADR-010）
+setupSwUpdatePrompt();

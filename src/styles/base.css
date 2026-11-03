@@ -51,3 +51,47 @@ body {
   font-size: 13px;
   line-height: 1.8;
 }
+
+
+/* M3 · SW「刷新即更新」提示条（ADR-008） */
+.fvp-sw-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 16px;
+  border: 1px solid #2c333c;
+  border-radius: 10px;
+  background: #1c2229;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  font-size: 14px;
+}
+
+.fvp-sw-toast__text {
+  color: var(--fvp-fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fvp-sw-toast__btn {
+  flex: none;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--fvp-accent);
+  color: #06230f;
+  cursor: pointer;
+}
+
+.fvp-sw-toast__btn--ghost {
+  background: transparent;
+  color: var(--fvp-muted);
+}

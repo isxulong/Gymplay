@@ -14,6 +14,7 @@ import type { PlayerConfig } from '../core/config/schema';
 import type { EditorController, QueueFrame } from '../app/controller';
 import {
   COPY_KEY_RECEIVER_GUIDE,
+  COPY_KEY_TOO_LONG,
   COPY_REPLACE_CONFIRM,
 } from '../app/controller';
 import type { AppState } from '../app/state';
@@ -60,6 +61,14 @@ export function createEditorView(root: HTMLElement): EditorView {
     class: 'fvp-hidden-file',
   }) as HTMLInputElement;
 
+  // M3 · 载体二：.json 配置文件导入入口（隐藏文件输入）
+  const configFileInput = h('input', {
+    type: 'file',
+    accept: '.json,application/json',
+    'data-testid': 'config-file-input',
+    class: 'fvp-hidden-file',
+  }) as HTMLInputElement;
+
   const saveState = h('span', { class: 'fvp-save-state', 'data-testid': 'save-state' });
   const banners = h('div', { class: 'fvp-banners', 'data-testid': 'banners' });
 
@@ -103,9 +112,11 @@ export function createEditorView(root: HTMLElement): EditorView {
   // 分享 / 导入区
   const shareOpenBtn = h('button', { class: 'fvp-btn fvp-btn--primary', 'data-testid': 'share-open' }, '🔗 生成分享链接');
   const sharePanel = h('div', { class: 'share__panel' });
+  const exportOpenBtn = h('button', { class: 'fvp-btn', 'data-testid': 'export-open' }, '📤 导出配置');
+  const importOpenBtn = h('button', { class: 'fvp-btn', 'data-testid': 'import-open' }, '📥 导入配置');
   const keyInput = h('input', {
     type: 'text',
-    placeholder: '粘贴分享链接或密钥',
+    placeholder: '粘贴分享链接、密钥或配置 JSON',
     'data-testid': 'key-input',
     class: 'share__input',
   }) as HTMLInputElement;
@@ -114,7 +125,7 @@ export function createEditorView(root: HTMLElement): EditorView {
     'section',
     { class: 'share-pane' },
     h('h2', {}, '分享与导入'),
-    shareOpenBtn,
+    h('div', { class: 'share__file-ops' }, shareOpenBtn, exportOpenBtn, importOpenBtn),
     sharePanel,
     h('div', { class: 'share__import' }, keyInput, keyImportBtn),
     h('p', { class: 'fvp-muted' }, COPY_SOURCE_LIMITS),
@@ -122,8 +133,10 @@ export function createEditorView(root: HTMLElement): EditorView {
 
   const editorMain = h('main', { class: 'fvp-editor', 'data-testid': 'editor' }, playerPane, segmentsPane, queuePane, sharePane);
 
-  // 空状态（F9 AC2：三步引导 + 文案 A）
+  // 空状态（F9 AC2：三步引导 + 文案 A；M3：附接收方「导入配置」入口——
+  // 冷启动无本地配置时分享区不可见，拿到 .json 编排文件的接收方从这里进入）
   const emptyPickBtn = h('button', { class: 'fvp-btn fvp-btn--primary fvp-btn--big', 'data-testid': 'empty-pick' }, '📂 选择本地视频');
+  const emptyImportBtn = h('button', { class: 'fvp-btn', 'data-testid': 'empty-import' }, '📥 导入编排配置');
   const emptyState = h(
     'section',
     { class: 'empty-state', 'data-testid': 'empty-state' },
@@ -136,6 +149,7 @@ export function createEditorView(root: HTMLElement): EditorView {
       h('li', {}, '③ 勾选段落生成播放队列，开练'),
     ),
     emptyPickBtn,
+    h('p', { class: 'fvp-muted' }, '已有练友分享的编排文件（.json）？', emptyImportBtn),
     h('p', { class: 'fvp-muted' }, COPY_SOURCE_LIMITS),
   );
 
@@ -164,6 +178,7 @@ export function createEditorView(root: HTMLElement): EditorView {
       editorMain,
     ),
     fileInput,
+    configFileInput,
   );
 
   let controllerRef: EditorController | null = null;
@@ -176,10 +191,18 @@ export function createEditorView(root: HTMLElement): EditorView {
       if (file) void controller.importFile(file);
       fileInput.value = ''; // 允许重选同一文件触发 change
     });
+    on(configFileInput, 'change', () => {
+      const file = configFileInput.files?.[0];
+      if (file) void controller.importConfigFile(file);
+      configFileInput.value = '';
+    });
     for (const btn of [emptyPickBtn, needsVideoBtn]) on(btn, 'click', () => fileInput.click());
+    on(emptyImportBtn, 'click', () => configFileInput.click());
     on(playToggle, 'click', () => controller.togglePlay());
     on(markBtn, 'click', () => controller.mark());
     on(shareOpenBtn, 'click', () => controller.openShare());
+    on(exportOpenBtn, 'click', () => controller.exportConfigFile());
+    on(importOpenBtn, 'click', () => configFileInput.click());
     on(keyImportBtn, 'click', () => controller.importKeyText(keyInput.value));
 
     store.subscribe((state) => render(state, store, controller));
@@ -244,6 +267,7 @@ export function createEditorView(root: HTMLElement): EditorView {
     markBtn.toggleAttribute('disabled', !state.videoReady);
     playToggle.toggleAttribute('disabled', !state.videoReady);
     shareOpenBtn.toggleAttribute('disabled', cfg === null);
+    exportOpenBtn.toggleAttribute('disabled', cfg === null);
 
     if (cfg) {
       timeline.update({
@@ -417,7 +441,7 @@ export function createEditorView(root: HTMLElement): EditorView {
     );
   }
 
-  // ---------- 分享面板（文案 B 确认 → 生成；F8 AC1） ----------
+  // ---------- 分享面板（文案 B 确认 → 生成；F8 AC1；P10 超限 → 引导导出） ----------
   function renderSharePanel(state: AppState, controller: EditorController): void {
     if (state.shareConfirmOpen) {
       const confirm = h('button', { class: 'fvp-btn fvp-btn--primary', 'data-testid': 'share-confirm' }, '确认生成');
@@ -429,6 +453,20 @@ export function createEditorView(root: HTMLElement): EditorView {
         h('div', { class: 'share__confirm', 'data-testid': 'share-confirm-panel' },
           h('p', {}, COPY_SHARE_COPYRIGHT),
           h('div', { class: 'fvp-banner__ops' }, confirm, cancel)),
+      );
+      return;
+    }
+    // P10 降级（M3）：URL 超 1500 判定线 → 不生成链接，引导导出 .json 文件
+    if (state.shareExportPrompt) {
+      const exportNow = h('button', { class: 'fvp-btn fvp-btn--primary', 'data-testid': 'share-export' }, '📤 导出配置（.json 文件）');
+      on(exportNow, 'click', () => controller.exportConfigFile());
+      const close = h('button', { class: 'fvp-btn', 'data-testid': 'share-close' }, '关闭');
+      on(close, 'click', () => controller.closeShare());
+      mount(
+        sharePanel,
+        h('div', { class: 'share__confirm', 'data-testid': 'share-too-long' },
+          h('p', {}, COPY_KEY_TOO_LONG),
+          h('div', { class: 'fvp-banner__ops' }, exportNow, close)),
       );
       return;
     }

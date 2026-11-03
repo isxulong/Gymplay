@@ -133,12 +133,12 @@ describe('codec · P10 容量结论回归锁', () => {
     });
   }
 
-  it('50 段密钥 < 1500 判定线（P10 实测 1359）', () => {
+  it('50 段密钥 < 1500 判定线（P10 产线管线实测 1271）', () => {
     const len = keyLength(encodeConfig(bigConfig(50)));
     expect(len).toBeLessThan(URL_KEY_CHAR_LIMIT);
   });
 
-  it('80 段密钥 > 1500 判定线 → 需走 .json 降级（P10 实测 1911）', () => {
+  it('80 段密钥 > 1500 判定线 → 需走 .json 降级（P10 产线管线实测 1852）', () => {
     const len = keyLength(encodeConfig(bigConfig(80)));
     expect(len).toBeGreaterThan(URL_KEY_CHAR_LIMIT);
   });

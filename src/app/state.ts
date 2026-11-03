@@ -46,6 +46,8 @@ export interface AppState {
   /** 分享面板：文案 B 确认 → 生成链接 */
   shareConfirmOpen: boolean;
   shareLink: string | null;
+  /** P10 降级：链接超 1500 判定线 → 不生成长链，引导走 .json 导出（M3 接线） */
+  shareExportPrompt: boolean;
   notices: Notice[];
   /** 驾驶舱顶部一次性提示（定稿 §1.2 文案 D）：Wake Lock API 缺失 / 请求被拒 */
   wakeLockHint: boolean;
@@ -69,6 +71,7 @@ export const initialState: AppState = {
   confirmReplaceOpen: false,
   shareConfirmOpen: false,
   shareLink: null,
+  shareExportPrompt: false,
   notices: [],
   wakeLockHint: false,
   lineControlHint: false,

@@ -511,6 +511,13 @@
   gap: 8px;
 }
 
+/* M3 · 载体二（P10 降级）：分享链接 / 导出配置 / 导入配置 三入口 */
+.share__file-ops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .share__confirm,
 .share__result {
   display: flex;

@@ -5,8 +5,9 @@
  *   → pako deflate（level 9）→ base64url → 拼入 URL hash（#c=…）。
  * 解码为完全逆过程；任何一步失败返回带原因的可诊断错误，不静默兜底（F8 AC4）。
  *
- * P10 结论（2026-11 iPhone 实测，pako 锁定 1.0.11）：80 段配置密钥 1911 字符 > 1500 判定线
- *   → URL 密钥适用 ≤50 段（1359 字符）；>50 段走 .json 导出/导入降级（M3 接线 UI）。
+ * P10 结论（2026-11-03 产线管线重跑，canonicalize＋deflate level 9，pako 锁定 1.0.11）：
+ *   80 段配置密钥 1852 字符 > 1500 判定线 → URL 密钥适用 ≤50 段（1271 字符）；
+ *   >50 段走 .json 导出/导入降级（M3 已接线 UI）。旧 1911/1359 为旧探针管线数值，已作废（见 ADR-001）。
  *   两种载体共享同一数据模型：.json 载体即本模块的规范化 JSON 文本。
  */
 
@@ -100,7 +101,7 @@ export function decodeKey(key: string): Result<PlayerConfig, CodecError> {
   return validate(migrated.value);
 }
 
-/** 载体二：.json 文件导出（P10 降级路径。M0 仅占位实现函数，UI 在 M3 接线）。 */
+/** 载体二：.json 文件导出（P10 降级路径，M3 已接线 UI：controller.exportConfigFile）。 */
 export function exportConfig(cfg: PlayerConfig): Blob {
   const checked = validate(cfg);
   if (!checked.ok) throw new Error(`exportConfig 收到非法配置：${checked.error.message}`);

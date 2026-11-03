@@ -3,6 +3,35 @@
 版本口径：App 版本 SemVer（feat 升 minor、fix 升 patch、协议破坏性变更升 major）；
 配置协议版本（Schema v）独立演进，两边分开记录（蓝图版本演进五条 · 第 5 条）。
 
+## [0.3.0] - 2026-11-03
+
+M3 收口（App 版本 0.2.0 → 0.3.0；配置协议版本 Schema v1 不变）：
+
+### 分享降级导出（M3-2）
+
+- 编辑器新增「📤 导出配置」（下载 .json）与「📥 导入配置」（选文件，密钥框亦可直接粘贴 JSON 文本）入口，冷启动空态同样提供导入入口；
+- 分享密钥超 1500 字符上限（`URL_KEY_CHAR_LIMIT`）时不再生成会被截断的长链，改为「share-too-long」引导面板（含一键导出按钮），文案说明截断风险并建议改用 .json 文件；本地配置仍自动保存；
+- 导入纪律沿用既有 F7 AC3 / F8 AC4：本地已有配置时走草稿挂起、显式应用后落盘；解析失败给可诊断文案、不产生半配置状态；与当前内容一致时提示无需导入；
+- 新增单测 `tests/unit/core/config/file-transfer.test.ts`（7 例）与 E2E `tests/e2e/export-import.spec.ts`（4 例）；注释口径修正为实测密钥 1711 字符（pako 锁定 1.0.11）。
+
+### P10 管线统一与数值重跑（M3-1b）
+
+- `probe/p10-url-length.html` 编码管线改为与产线 `src/core/config/codec.ts` 完全一致（canonicalize → pako deflate level 9 → 分块 base64url），六档密钥与产线管线输出逐字节一致；
+- ADR-001 回填产线管线实测值：10 段 518 / 25 段 796 / 50 段 1271 / 80 段 1852 / 100 段 2235 / 150 段 3199 字符；旧 1359/1911 为旧探针管线数值，已作废（ADR-004、codec.ts 头注与 codec 单测标题同步对齐）；
+- 新增 `tests/unit/core/config/p10-url-length.test.ts`（数值表 + 单调性 + 1271/1852 回归锁）。
+
+### SW 缓存策略与「刷新即更新」（M3-3）
+
+- SW 缓存策略收口（ADR-010）：app shell 全量预缓存（构建时生成清单）消除发版窗口离线白屏（终审 P1①）；版本化缓存共存 + 懒删（保留最新两代）；
+- CACHE_VERSION 换名自动化（终审 P1③）：`npm run build` 链内 `scripts/build-sw.mjs` 从 package.json 版本 + 构建时间戳注入 BUILD_ID，release 链路无需人工改 sw.js；
+- 「刷新即更新」提示接线（终审 P1②）：SW 升级 activate 后 postMessage 通知页面，`src/ui/sw-update.ts` 弹提示条（刷新 / 稍后），页面回前台即查 + 每 5 分钟轮询 reg.update()；
+- 缺陷修复：SW message 监听器前移至 `setupSwUpdatePrompt()` 同步段（早于 `load` 事件与 `register()` 调用），消除 postMessage 早到导致提示条丢失的竞态；差分验证：基线产物 TOAST_LOST → 修复后产物 TOAST_SHOWN；
+- 0.2.0「M3 必办登记」之 CACHE_VERSION 自动化事项随本批次闭合。
+
+### 文档债批次（M3-1）
+
+- README 阶段口径对齐 M2/v0.2.0；ADR-004 补段间重叠校验变更记录；ADR-001 补 P6 结论与设备矩阵；新增 ADR-008（native-engine.ts 覆盖率排除口径）、ADR-009（HEVC 直读口径演进变更登记）；新增 `docs/probe-archive-gap.md` 探针存档偏差登记（「结论在、记录缺」）。
+
 ## [0.2.0] - 2026-11-03
 
 M2 驾驶舱期（Schema v1 不变）：
@@ -15,7 +44,8 @@ M2 驾驶舱期（Schema v1 不变）：
 - L2 调度器新增 `next()` / `prev()`（跳段）与单段循环圈数计数（loopsDone 在 segment 模式下记重播次数）；
 - 修复 M1 遗留 P2-1：`schema.validate` 补段间重叠校验（F3 AC3 跨段约束），端点相接合法、区间相交拒绝（BAD_SEGMENTS）；edit.ts 头注「输出恒满足 schema.validate 约束」恢复为真；
 - E2E 新增：路径 3（驾驶舱全流程）、单段循环 100 圈无泄漏实测（页面内回卷计数 + 精确堆读数，10→100 圈堆增长 0.046MB）；
-- `sw.js` CACHE_VERSION 同步换名 v0.2.0（发版人工换名，M3 收口自动化，见 P2-3 登记）。
+- `sw.js` CACHE_VERSION 同步换名 v0.2.0（发版人工换名，M3 收口自动化，见 P2-3 登记）；
+- 文档债批次补记（2026-11-03，终审报告步骤 1）：README 阶段口径对齐 M2/v0.2.0；ADR-004 补段间重叠校验变更记录；ADR-001 补 P6 结论与设备矩阵；新增 ADR-008（native-engine.ts 覆盖率排除口径）、ADR-009（HEVC 口径演进变更登记）；新增 `docs/probe-archive-gap.md` 探针存档偏差登记（「结论在、记录缺」）。
 
 ### M3 必办登记（不变）
 

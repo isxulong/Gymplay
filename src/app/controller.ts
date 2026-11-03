@@ -15,7 +15,15 @@
  * 「应用」后草稿转正并落盘，「保留我的」丢弃草稿。两态共用同一组编辑入口。
  */
 
-import { encodeConfig, decodeKey, canonicalize, URL_KEY_CHAR_LIMIT, COPY_KEY_INVALID } from '../core/config/codec';
+import {
+  encodeConfig,
+  decodeKey,
+  canonicalize,
+  URL_KEY_CHAR_LIMIT,
+  COPY_KEY_INVALID,
+  exportConfig as buildConfigFileBlob,
+  importConfig as parseConfigFile,
+} from '../core/config/codec';
 import { buildHashWithKey, extractKeyFromHash, writeKeyToLocation } from '../core/config/hash';
 import type { Persistence } from '../core/config/persistence';
 import {
@@ -58,9 +66,9 @@ export const COPY_VIDEO_MISMATCH =
 export const COPY_BOUNDARY_CLAMPED = '段边界已按实际长度调整，请核对后再练。';
 /** F1 AC3 确认语 */
 export const COPY_REPLACE_CONFIRM = '导入新视频将清空当前分段配置';
-/** P10 结论：URL 密钥超 1500 判定线（>50 段）→ M1 只提示，导出文件分享在 M3 接线 */
+/** P10 结论：URL 密钥超 1500 判定线（>50 段）→ M3 起引导走 .json 导出/导入降级，不生成不可用长链 */
 export const COPY_KEY_TOO_LONG =
-  '当前配置段数较多，生成的链接超过 1500 字符上限，在部分分享渠道可能被截断而无法还原。配置已自动保存在本机；「导出文件分享」功能将在后续版本提供。';
+  '当前配置段数较多，生成的链接超过 1500 字符上限，在部分分享渠道可能被截断而无法还原。请改用「导出配置」生成 .json 文件发送给练友；配置已自动保存在本机。';
 /** 接收方引导（需求稿文案 B2）：打开分享链接后、导入视频前 */
 export const COPY_KEY_RECEIVER_GUIDE =
   '你收到的是一份「训练编排」，不包含视频。请从本机导入同一份视频文件——导入后，分段、速度和顺序会自动套好，直接开练。';
@@ -118,6 +126,10 @@ export interface EditorController {
   closeShare(): void;
   copyShareLink(): Promise<boolean>;
   importKeyText(text: string): void;
+  /** M3 · 载体二（P10 降级）：当前配置导出为 .json 文件下载 */
+  exportConfigFile(): boolean;
+  /** M3 · 载体二：从 .json 配置文件导入（与 URL 密钥共用校验链与草稿纪律） */
+  importConfigFile(file: Blob): Promise<void>;
   applyDraft(): void;
   discardDraft(): void;
   notify(kind: NoticeKind, text: string): void;
@@ -459,6 +471,37 @@ export function createEditorController(opts: {
     if (scheduler) stopQueueInternal();
   }
 
+  // ---------- 配置导入（M3：URL 密钥与 .json 文件共用生效入口） ----------
+
+  /** .json 文件 / 粘贴 JSON 文本导入：解析 + 校验，失败给可诊断文案（F8 AC4 纪律一致）。 */
+  async function importConfigBlob(file: Blob): Promise<void> {
+    const parsed = await parseConfigFile(file);
+    if (!parsed.ok) {
+      notify('error', parsed.error.message);
+      return;
+    }
+    applyImportedConfig(parsed.value);
+  }
+
+  /** 导入配置生效：F7 AC3 草稿纪律（本地有配置先挂草稿，应用前不写本地存储）。 */
+  function applyImportedConfig(cfg: PlayerConfig): void {
+    const st = store.get();
+    if (st.config && canonicalize(st.config) === canonicalize(cfg)) {
+      notify('info', '这份配置与当前内容一致，无需导入。');
+      return;
+    }
+    if (st.config !== null) {
+      // F7 AC3：本地有配置 → 草稿态挂起，不写本地存储
+      store.update({ pendingKeyConfig: cfg });
+      notify('info', '已载入分享编排为草稿（未保存），请预览后选择「应用」或「保留我的」。');
+    } else {
+      const aligned = st.videoReady ? alignConfigToVideo(cfg, st.videoName ?? cfg.video.filename, st.videoDuration ?? cfg.video.duration) : cfg;
+      store.update({ config: aligned, configOrigin: 'key', needsVideo: !st.videoReady });
+      persist(aligned);
+      notify('info', '配置已导入。');
+    }
+  }
+
   // ---------- 对外动作 ----------
 
   const controller: EditorController = {
@@ -647,7 +690,7 @@ export function createEditorController(opts: {
 
     openShare(): void {
       if (!activeConfig()) return;
-      store.update({ shareConfirmOpen: true, shareLink: null });
+      store.update({ shareConfirmOpen: true, shareLink: null, shareExportPrompt: false });
     },
 
     confirmShare(): void {
@@ -656,12 +699,17 @@ export function createEditorController(opts: {
       // 草稿态下分享的是草稿内容（可试排后可分享）
       const key = encodeConfig(cfg);
       const url = `${window.location.origin}${window.location.pathname}${buildHashWithKey(key)}`;
-      if (url.length > URL_KEY_CHAR_LIMIT) notify('warn', COPY_KEY_TOO_LONG);
-      store.update({ shareConfirmOpen: false, shareLink: url });
+      if (url.length > URL_KEY_CHAR_LIMIT) {
+        // P10 降级（M3）：超 1500 判定线 → 不生成会被截断的长链，引导导出 .json 文件
+        notify('warn', COPY_KEY_TOO_LONG);
+        store.update({ shareConfirmOpen: false, shareLink: null, shareExportPrompt: true });
+        return;
+      }
+      store.update({ shareConfirmOpen: false, shareLink: url, shareExportPrompt: false });
     },
 
     closeShare(): void {
-      store.update({ shareConfirmOpen: false, shareLink: null });
+      store.update({ shareConfirmOpen: false, shareLink: null, shareExportPrompt: false });
     },
 
     async copyShareLink(): Promise<boolean> {
@@ -680,6 +728,11 @@ export function createEditorController(opts: {
     importKeyText(text: string): void {
       const trimmed = text.trim();
       if (!trimmed) return;
+      // M3：粘贴 .json 配置文本（降级载体二）→ 与文件导入共用同一链路
+      if (trimmed.startsWith('{')) {
+        void importConfigBlob(new Blob([trimmed], { type: 'application/json' }));
+        return;
+      }
       // 兼容整段链接 / #c=… / 裸密钥三种粘贴形态
       let key: string | null = null;
       const hashIdx = trimmed.indexOf('#');
@@ -694,21 +747,31 @@ export function createEditorController(opts: {
         notify('error', COPY_KEY_INVALID); // F8 AC4
         return;
       }
-      const st = store.get();
-      if (st.config && canonicalize(st.config) === canonicalize(decoded.value)) {
-        notify('info', '这份密钥与当前配置内容一致，无需导入。');
-        return;
+      applyImportedConfig(decoded.value);
+    },
+
+    exportConfigFile(): boolean {
+      const cfg = activeConfig();
+      if (!cfg) {
+        notify('warn', '当前没有可导出的配置。');
+        return false;
       }
-      if (st.config !== null) {
-        // F7 AC3：本地有配置 → 草稿态挂起，不写本地存储
-        store.update({ pendingKeyConfig: decoded.value });
-        notify('info', '已载入分享编排为草稿（未保存），请预览后选择「应用」或「保留我的」。');
-      } else {
-        const aligned = st.videoReady ? alignConfigToVideo(decoded.value, st.videoName ?? decoded.value.video.filename, st.videoDuration ?? decoded.value.video.duration) : decoded.value;
-        store.update({ config: aligned, configOrigin: 'key', needsVideo: !st.videoReady });
-        persist(aligned);
-        notify('info', '密钥已导入。');
-      }
+      // P10 降级载体二：规范化 JSON 文本落 .json 文件（与 URL 密钥同一数据模型）
+      const blob = buildConfigFileBlob(cfg);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `gymplay-config-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      notify('info', '配置已导出为 .json 文件，发送给练友即可；对方用「导入配置」装入后选择同一视频开练。');
+      return true;
+    },
+
+    async importConfigFile(file: Blob): Promise<void> {
+      await importConfigBlob(file);
     },
 
     applyDraft(): void {
