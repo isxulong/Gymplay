@@ -75,8 +75,8 @@ export const COPY_VIDEO_MISMATCH =
   '导入的视频与这份编排记录的长度不一致，可能不是同一份视频。段边界已按实际长度调整，请核对后再练。';
 /** 文案 E 话术的信息级复用（F8 AC5，≤1s 钳制） */
 export const COPY_BOUNDARY_CLAMPED = '段边界已按实际长度调整，请核对后再练。';
-/** F1 AC3 确认语 */
-export const COPY_REPLACE_CONFIRM = '导入新视频将清空当前分段配置';
+/** F1 AC3 确认语（v0.3.2 · D-4 补偿：追加「且无法撤销」——replace 清空不可复原） */
+export const COPY_REPLACE_CONFIRM = '导入新视频将清空当前分段配置，且无法撤销';
 /** P10 结论：URL 密钥超 1500 判定线（>50 段）→ M3 起引导走 .json 导出/导入降级，不生成不可用长链 */
 export const COPY_KEY_TOO_LONG =
   '当前配置段数较多，生成的链接超过 1500 字符上限，在部分分享渠道可能被截断而无法还原。请改用「导出配置」生成 .json 文件发送给练友；配置已自动保存在本机。';

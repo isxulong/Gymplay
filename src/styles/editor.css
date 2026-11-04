@@ -92,6 +92,12 @@
   font-weight: 600;
 }
 
+/* v0.3.2 · 项3：换视频次级按钮——44px 触摸命中区（真机走查反馈：入口命中区过小） */
+.fvp-btn--change-video {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
 .fvp-muted {
   color: var(--fvp-muted);
   font-size: 12px;

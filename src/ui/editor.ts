@@ -122,6 +122,14 @@ export function createEditorView(root: HTMLElement): EditorView {
     h('button', { class: 'fvp-btn fvp-btn--step', 'data-testid': 'step-plus-1s', 'data-delta': '1' }, '+1s'),
   );
 
+  // v0.3.2 · 项3：换视频入口（UX-反馈2）——transport 行尾次级按钮，走既有 importFile 链
+  // （不同名 → 确认横幅；同名 no-op；队列播放中停队列），videoReady=false 时随 playerPane 隐藏
+  const changeVideoBtn = h(
+    'button',
+    { class: 'fvp-btn fvp-btn--change-video', 'data-testid': 'change-video' },
+    '🔄 换视频',
+  );
+
   const timeline: TimelineBar = createTimelineBar({
     onSeek: (t) => controllerRef?.seekPreview(t),
     onSelectSegment: (id) => controllerRef?.selectSegment(id),
@@ -139,6 +147,7 @@ export function createEditorView(root: HTMLElement): EditorView {
       markBtn,
       h('div', { class: 'player__volume-group' }, volumeMute, volumeSlider),
       stepButtons,
+      changeVideoBtn,
     ),
     timeline.el,
   );
@@ -245,6 +254,9 @@ export function createEditorView(root: HTMLElement): EditorView {
       configFileInput.value = '';
     });
     for (const btn of [emptyPickBtn, needsVideoBtn]) on(btn, 'click', () => fileInput.click());
+
+    // v0.3.2 · 项3：换视频按钮走同一 file-input 通道（确认横幅/同名 no-op/停队列复用既有链）
+    on(changeVideoBtn, 'click', () => fileInput.click());
     on(emptyImportBtn, 'click', () => configFileInput.click());
     on(playToggle, 'click', () => controller.togglePlay());
     on(markBtn, 'click', () => controller.mark());
