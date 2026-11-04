@@ -29,7 +29,7 @@ iOS 适配收口、错误文案映射全量上线、release 管线双站部署�
 
 ### 工程入口
 
-- 本地开发：`npm ci && npm run dev`；质量门禁：`npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run gate:size && npm run gate:pwa`；E2E：`npm run test:e2e`（fixtures 已入仓，重建用 `tests/e2e/fixtures/gen-fixtures.sh`）。
+- 本地开发：`npm ci && npm run dev`；质量门禁：`npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run gate:size && npm run gate:pwa`；E2E：`npm run test:e2e`（fixtures 已入仓，重建用 `tests/e2e/fixtures/gen-fixtures.sh`；首跑前需 `npx playwright install chromium` 安装浏览器，受限环境可设 `FVP_CHROMIUM_PATH` 指向系统 Chromium 可执行文件，见 playwright.config.ts 头注）。
 - 分层与契约：见 `docs/adr/`（ADR-001~009）与《综合方案修订定稿 v2》。
 - 部署：tag `v*` 触发 release.yml 构建并发布到 gh-pages 分支。GitHub Pages 源需指向 gh-pages（一次性人工设置：Settings → Pages → Source 选 gh-pages 分支 /(root)；该设置无法由 GITHUB_TOKEN 自动变更）。
 

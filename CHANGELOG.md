@@ -45,7 +45,7 @@ v0.3.2 体验大版本（App 版本 0.3.1 → 0.3.2；配置协议版本 Schema 
 ### 版本与验证
 
 - package.json bump 0.3.2（SW BUILD_ID 注入链路 scripts/build-sw.mjs 读版本号，随构建自动更新）；
-- 实跑门禁（终态）：单测 278/278（基线 214 + 新增 64）；desktop E2E 56 过 + 1 已知环境挂（cockpit-path3 headless Wake Lock，基线同挂）；mobile-375 双跑 12 条次；key-compat 4 样例字节一致（200/398/319/1115，退出码 0）；tsc / eslint 0 错；`git diff 0463917 --stat -- src/core/` = 0 行（core 零改动）；gate-undo PASS；9 个阶段 commit 各自独立可 revert。
+- 实跑门禁（终态）：单测 278/278（基线 214 + 新增 64）；desktop E2E 56 过 + 1 已知环境挂（cockpit-path3 headless Wake Lock，基线同挂）；mobile-375 双跑 12 条次；key-compat 4 样例字节一致（200/398/319/1115，退出码 0）；tsc / eslint 0 错；`git diff 0463917 --stat -- src/core/` = 0 行（core 零改动）；gate-undo PASS；9 个阶段 commit LIFO 顺序可回滚、各阶段边界态全绿（乱序单点 revert 不保证——Phase 3 构建于 Phase 2b 之上）。
 
 ## [0.3.1] - 2026-11-04
 
