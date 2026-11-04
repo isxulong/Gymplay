@@ -123,7 +123,17 @@
 
 /* ---------- 横幅与通知 ---------- */
 
-.fvp-banners {
+/* v0.3.2 · 项1（C1 裁决）：通知栈 sticky 吸顶（UX-反馈1）；决策横幅留文档流原位（UX-v1.1-C6） */
+.fvp-notice-stack {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fvp-banner-stack {
   display: flex;
   flex-direction: column;
   gap: 8px;

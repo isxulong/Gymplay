@@ -12,6 +12,18 @@ import { defineConfig } from '@playwright/test';
 const env = ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env) ?? {};
 const chromiumPath = env.FVP_CHROMIUM_PATH;
 
+// v0.3.2 · 项1：E2E 通知冻结说明（实现偏差，已记入验证记录上报主 AD）——
+// 方案 v1.1 原定 playwright.config.ts 增加 auto-use fixture 注入通道②
+// （window.__GYMPLAY_TEST_FREEZE_NOTICES__），但 Playwright 1.64.1 的
+// Config/TestConfig 不支持 fixture 定义（fixture 只能经 spec 内 test.extend()），
+// 按字面不可实现。依方案 D-9 通道优先级改用：
+//   · 通道③ navigator.webdriver === true（Playwright 默认 true）→ 默认冻结全部
+//     info 计时与挤位，保护 export-import / share-path2 / v031 既有 info 断言零改动；
+//     有效性由 notifications.spec 守卫用例显式断言（webdriver===true + 冻结静止）。
+//   · 通道① URL ?fvpNoticeTtl=500 → 计时行为用例（加速消失 / 挤位 / hover 暂停）显式覆盖。
+// 产品代码 notice-center.ts 三通道（含通道②）照方案完整实现，通道②保留供
+// 单测与手动调试注入使用。
+
 export default defineConfig({
   testDir: './tests/e2e',
   testMatch: '**/*.spec.ts',

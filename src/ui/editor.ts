@@ -84,7 +84,11 @@ export function createEditorView(root: HTMLElement): EditorView {
   }) as HTMLInputElement;
 
   const saveState = h('span', { class: 'fvp-save-state', 'data-testid': 'save-state' });
-  const banners = h('div', { class: 'fvp-banners', 'data-testid': 'banners' });
+  // v0.3.2 · 项1（C1 裁决）：单一 banners 容器拆为两个兄弟容器——
+  // notice-stack（sticky 吸顶，承载通知）+ banner-stack（文档流原位，承载决策横幅）。
+  // 显式标注：notice-stack 的 sticky 不改写 UX-v1.1-C6——C6 仅约束决策横幅，决策横幅随文档流。
+  const noticeStack = h('div', { class: 'fvp-notice-stack', 'data-testid': 'notice-stack' });
+  const bannerStack = h('div', { class: 'fvp-banner-stack', 'data-testid': 'banner-stack' });
 
   const video = h('video', {
     class: 'player__video',
@@ -215,7 +219,8 @@ export function createEditorView(root: HTMLElement): EditorView {
       'div',
       { class: 'fvp' },
       h('header', { class: 'fvp__header' }, h('h1', {}, 'Gymplay · 编辑器'), saveState),
-      banners,
+      noticeStack,
+      bannerStack,
       emptyState,
       needsVideoPane,
       editorMain,
@@ -247,6 +252,23 @@ export function createEditorView(root: HTMLElement): EditorView {
     on(exportOpenBtn, 'click', () => controller.exportConfigFile());
     on(importOpenBtn, 'click', () => configFileInput.click());
     on(keyImportBtn, 'click', () => controller.importKeyText(keyInput.value));
+
+    // v0.3.2 · 项1：通知栈 hover/focus 区域级暂停（UX-反馈1）——pointerover/out 与
+    // focusin/out 事件委托到 notice-stack，命中 .fvp-notice--info 时暂停/恢复计时。
+    const overInfo = (target: EventTarget | null): boolean =>
+      target instanceof Element && !!target.closest('.fvp-notice--info');
+    on(noticeStack, 'pointerover', (ev) => {
+      if (overInfo(ev.target)) controller.pauseNoticeTimers();
+    });
+    on(noticeStack, 'pointerout', (ev) => {
+      if (overInfo(ev.target)) controller.resumeNoticeTimers();
+    });
+    on(noticeStack, 'focusin', (ev) => {
+      if (overInfo(ev.target)) controller.pauseNoticeTimers();
+    });
+    on(noticeStack, 'focusout', (ev) => {
+      if (overInfo(ev.target)) controller.resumeNoticeTimers();
+    });
 
     // v0.3.1 · R2 音量控件：初始化为本机偏好；滑杆拖动实时生效并落盘（R2 AC1/AC3/AC5）
     // R2 AC5 口径补强（复核一 P3-1）：图标呈现「实际可闻状态」——volume=0 等价静音态
@@ -393,7 +415,8 @@ export function createEditorView(root: HTMLElement): EditorView {
 
   // ---------- 通知与横幅 ----------
   function renderBanners(state: AppState, controller: EditorController): void {
-    const nodes: Node[] = [];
+    // v0.3.2 · 项1（C1 裁决）：决策横幅（常驻、无计时）挂 banner-stack（文档流原位）
+    const decisionNodes: Node[] = [];
 
     // F7 AC3 冲突横幅：本地有配置 + 打开分享链接 → 草稿态预览
     if (state.pendingKeyConfig) {
@@ -401,7 +424,7 @@ export function createEditorView(root: HTMLElement): EditorView {
       on(applyBtn, 'click', () => controller.applyDraft());
       const discardBtn = h('button', { class: 'fvp-btn', 'data-testid': 'conflict-discard' }, '保留我的编排');
       on(discardBtn, 'click', () => controller.discardDraft());
-      nodes.push(
+      decisionNodes.push(
         h(
           'div',
           { class: 'fvp-banner fvp-banner--conflict', 'data-testid': 'conflict-banner' },
@@ -417,7 +440,7 @@ export function createEditorView(root: HTMLElement): EditorView {
       on(ok, 'click', () => void controller.confirmReplace(true));
       const cancel = h('button', { class: 'fvp-btn', 'data-testid': 'replace-cancel' }, '取消');
       on(cancel, 'click', () => void controller.confirmReplace(false));
-      nodes.push(
+      decisionNodes.push(
         h(
           'div',
           { class: 'fvp-banner fvp-banner--warn', 'data-testid': 'replace-banner' },
@@ -429,24 +452,35 @@ export function createEditorView(root: HTMLElement): EditorView {
 
     // 存储降级（文案 F，R14）
     if (state.storageDegraded) {
-      nodes.push(h('div', { class: 'fvp-banner fvp-banner--warn', 'data-testid': 'storage-banner' }, COPY_STORAGE_UNAVAILABLE));
+      decisionNodes.push(h('div', { class: 'fvp-banner fvp-banner--warn', 'data-testid': 'storage-banner' }, COPY_STORAGE_UNAVAILABLE));
     }
 
-    // 通知栈
+    // v0.3.2 · 项1：通知栈挂 notice-stack（sticky 吸顶）；aria——info 礼貌播报、warn/error 告警
+    const noticeNodes: Node[] = [];
     for (const n of state.notices) {
       const close = h('button', { class: 'fvp-notice__close', 'data-testid': `notice-close-${n.id}` }, '×');
       on(close, 'click', () => controller.dismissNotice(n.id));
-      nodes.push(
+      const ariaAttrs: Record<string, string> =
+        n.kind === 'info'
+          ? { role: 'status', 'aria-live': 'polite' }
+          : { role: 'alert' };
+      noticeNodes.push(
         h(
           'div',
-          { class: `fvp-notice fvp-notice--${n.kind}`, 'data-testid': 'notice', 'data-kind': n.kind },
+          {
+            class: `fvp-notice fvp-notice--${n.kind}`,
+            'data-testid': 'notice',
+            'data-kind': n.kind,
+            ...ariaAttrs,
+          },
           h('span', {}, n.text),
           close,
         ),
       );
     }
 
-    mount(banners, ...nodes);
+    mount(bannerStack, ...decisionNodes);
+    mount(noticeStack, ...noticeNodes);
   }
 
   // ---------- 段落条 + 选中段编辑 ----------

@@ -61,6 +61,12 @@ import {
 } from '../platform/sources';
 import { createWakeLock, type WakeLockController } from '../platform/wake-lock';
 import { makeNotice } from './bootstrap';
+import {
+  createNoticeCenter,
+  pruneInfos,
+  resolveNoticeTiming,
+  NOTICE_INFO_CAP,
+} from './notice-center';
 import type { AppState, NoticeKind } from './state';
 import type { Store } from './store';
 
@@ -142,6 +148,9 @@ export interface EditorController {
   discardDraft(): void;
   notify(kind: NoticeKind, text: string): void;
   dismissNotice(id: number): void;
+  /** v0.3.2 · 项1：通知 hover/focus 区域级暂停与恢复（编辑器事件委托调用） */
+  pauseNoticeTimers(): void;
+  resumeNoticeTimers(): void;
   /** v0.3.1 · R2：设置音量（0..1，钳制），按设备记忆（localStorage，不进分享密钥）。 */
   setVolume(volume: number): void;
   /** v0.3.1 · R2：静音切换；取消静音后音量保持原值。 */
@@ -295,8 +304,36 @@ export function createEditorController(opts: {
 
   // ---------- 基础工具 ----------
 
+  // v0.3.2 · 项1：通知中心（info 5s 自动消失 + 并发挤位；freeze = 完全静止）。
+  // 冻结三通道优先级：URL 参数 ?fvpNoticeTtl > window 标志（E2E fixture）> navigator.webdriver。
+  const noticeTiming = resolveNoticeTiming({
+    search: typeof window !== 'undefined' ? window.location.search : '',
+    testFlag: typeof window !== 'undefined'
+      ? Boolean((window as unknown as { __GYMPLAY_TEST_FREEZE_NOTICES__?: boolean }).__GYMPLAY_TEST_FREEZE_NOTICES__)
+      : false,
+    webdriver: typeof navigator !== 'undefined' ? navigator.webdriver === true : false,
+  });
+  const noticeCenter = createNoticeCenter({
+    infoTtlMs: noticeTiming.infoTtlMs,
+    freeze: noticeTiming.freeze,
+    onExpire: (id) => {
+      // 到期消失走既有 dismissNotice 单一路径（挤位 / 自动 / 手动同一出口）
+      controller.dismissNotice(id);
+    },
+  });
+
   function notify(kind: NoticeKind, text: string): void {
-    store.update({ notices: [...store.get().notices, makeNotice(kind, text)] });
+    const notice = makeNotice(kind, text);
+    const current = store.get().notices;
+    // info 超上限挤位（freeze = 不挤位）：先推入，再对最旧 info 走既有
+    // dismissNotice 单一路径移除（B §1.2b——挤位 / 自动到期 / 手动关闭同一出口，含计时取消）
+    let evict: number[] = [];
+    if (!noticeTiming.freeze) {
+      evict = pruneInfos([...current, notice], NOTICE_INFO_CAP);
+    }
+    store.update({ notices: [...current, notice] });
+    for (const id of evict) controller.dismissNotice(id);
+    noticeCenter.track(notice);
   }
 
   /** 当前被编辑的配置：冲突草稿态下是草稿，否则是生效配置。 */
@@ -838,7 +875,16 @@ export function createEditorController(opts: {
     notify,
 
     dismissNotice(id: number): void {
+      noticeCenter.cancel(id);
       store.update({ notices: store.get().notices.filter((n) => n.id !== id) });
+    },
+
+    pauseNoticeTimers(): void {
+      noticeCenter.pauseAll();
+    },
+
+    resumeNoticeTimers(): void {
+      noticeCenter.resumeAll();
     },
 
     setVolume(volume: number): void {
@@ -862,6 +908,7 @@ export function createEditorController(opts: {
     },
 
     destroy(): void {
+      noticeCenter.destroy();
       stopQueueInternal();
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('pagehide', onPageHide);
