@@ -98,6 +98,13 @@ export function createEditorView(root: HTMLElement): EditorView {
   video.playsInline = true;
 
   const playToggle = h('button', { class: 'fvp-btn fvp-btn--primary', 'data-testid': 'play-toggle' }, '▶ 播放');
+  // v0.3.2 · 项7：模式徽标——transport 行 playToggle 旁常驻，随帧更新
+  //（预览中性灰 / 队列蓝 / 试听橙，三态配色见 editor.css；audit 态 Phase 4 接入）
+  const playModeBadge = h(
+    'span',
+    { class: 'fvp-play-mode-badge fvp-play-mode-badge--preview', 'data-testid': 'play-mode-badge' },
+    '预览 · 1x',
+  );
   const timeLabel = h('span', { class: 'player__time', 'data-testid': 'time-label' }, '0:00 / 0:00');
   const markBtn = h('button', { class: 'fvp-btn fvp-btn--mark', 'data-testid': 'mark-button' }, '✚ 打点');
 
@@ -143,6 +150,7 @@ export function createEditorView(root: HTMLElement): EditorView {
       'div',
       { class: 'player__transport' },
       playToggle,
+      playModeBadge,
       timeLabel,
       markBtn,
       h('div', { class: 'player__volume-group' }, volumeMute, volumeSlider),
@@ -345,6 +353,15 @@ export function createEditorView(root: HTMLElement): EditorView {
     // v0.3.1 · R1 AC6：当前时刻恒显一位小数（m:ss.s），时长沿用既有规则
     timeLabel.textContent = `${formatTimeTenth(timeSec)} / ${formatTime(duration)}`;
     playToggle.textContent = video.paused ? '▶ 播放' : '⏸ 暂停';
+    // v0.3.2 · 项7：模式徽标——恒读队列调度器（scheduler 在即队列态，rate 恒段值）；
+    // 暂停期间无帧回调，但徽标文本含速率不随暂停变化，各退出路径的 emitFrame 已覆盖刷新
+    if (q.queueIndex >= 0 && q.queueTotal > 0) {
+      playModeBadge.textContent = `队列 · 第 ${q.queueIndex + 1}/${q.queueTotal} 项 · ${q.rate}x`;
+      playModeBadge.className = 'fvp-play-mode-badge fvp-play-mode-badge--queue';
+    } else {
+      playModeBadge.textContent = '预览 · 1x';
+      playModeBadge.className = 'fvp-play-mode-badge fvp-play-mode-badge--preview';
+    }
     // v0.3.1 · v1.1 §5/§7.2：暂停时打点按钮带时刻、步进按钮显示；播放中隐藏步进
     markBtn.textContent = video.paused ? `✚ 打点 ${formatClock(timeSec, duration)}` : '✚ 打点';
     stepButtons.hidden = !video.paused || !state?.videoReady;

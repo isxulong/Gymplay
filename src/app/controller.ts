@@ -100,6 +100,13 @@ export interface QueueFrame {
   loopsDone: number;
 }
 
+/**
+ * v0.3.2 · 项7：播放模式（G-1 状态机）。
+ * idle = 未播 / 已停；preview = 编辑器自由预览（恒 1x，F7′）；
+ * queue = 队列有界播放（恒段值）；audit = 单段试听（Phase 4 落地）。
+ */
+export type PlayMode = 'idle' | 'preview' | 'queue' | 'audit';
+
 export interface EditorController {
   importFile(file: File): Promise<void>;
   confirmReplace(accept: boolean): Promise<void>;
@@ -166,10 +173,12 @@ export function createEditorController(opts: {
   store: Store<AppState>;
   persistence: Persistence;
   video: HTMLVideoElement;
+  /** v0.3.2 · 项7：测试注入引擎（单测 FakeEngine 指令序列断言）；缺省创建 NativeEngine。 */
+  engine?: PlayerEngine;
 }): EditorController {
   const { store, persistence, video } = opts;
   const caps = store.get().capabilities;
-  const engine: PlayerEngine = createNativeEngine(video, {
+  const engine: PlayerEngine = opts.engine ?? createNativeEngine(video, {
     rVFC: caps?.rVFC ?? false,
     rateRange: caps?.rateRange,
   });
@@ -182,6 +191,8 @@ export function createEditorController(opts: {
   engine.setMuted(volumePrefs.muted);
 
   let scheduler: SegmentScheduler | null = null;
+  // v0.3.2 · 项7：播放模式（G-1）——与 scheduler 同生命周期维护，驱动 togglePlay 模式感知
+  let playMode: PlayMode = 'idle';
   let objectUrlRevoke: (() => void) | null = null;
   let pendingReplaceFile: File | null = null;
   let lastSnapshotAt = 0;
@@ -285,6 +296,11 @@ export function createEditorController(opts: {
     scheduler = new SegmentScheduler(engine, systemClock, compilePlan(cfg), {
       capabilities: { rVFC: caps?.rVFC ?? false },
       onFinish: () => {
+        // v0.3.2 · 项7：播完确定性落点——onFinish 不经 stopQueueInternal（现状缺陷：
+        // 末段 2x 播完 rate 残留 2x），此处显式复位调度器句柄 + rate 归 1 + 模式回 idle
+        scheduler = null;
+        engine.setRate(1);
+        playMode = 'idle';
         store.update({ queuePlaying: false });
         persistence.clearPlayback();
         mediaSession?.setPlaybackState('none');
@@ -298,6 +314,7 @@ export function createEditorController(opts: {
       return false;
     }
     store.update({ queuePlaying: true });
+    playMode = 'queue';
     emitFrame();
     return true;
   }
@@ -441,6 +458,9 @@ export function createEditorController(opts: {
       scheduler.stop();
       scheduler = null;
     }
+    // v0.3.2 · 项7：停队列收口——rate 归 1、模式回 idle（所有停队列路径统一经此复位）
+    engine.setRate(1);
+    playMode = 'idle';
     if (store.get().queuePlaying) store.update({ queuePlaying: false });
     persistence.clearPlayback();
     mediaSession?.setPlaybackState('none');
@@ -605,12 +625,28 @@ export function createEditorController(opts: {
 
     togglePlay(): void {
       if (!store.get().videoReady) return;
-      if (video.paused) void engine.play();
-      else engine.pause();
+      // v0.3.2 · 项7：模式感知——队列中暂停/续播保段值（调度器维持 rate）；
+      // 自由预览起播前显式归 1（改速不泄漏进预览，F7′）
+      if (playMode === 'queue' && scheduler) {
+        if (video.paused) void engine.play();
+        else engine.pause();
+        emitFrame();
+        return;
+      }
+      if (video.paused) {
+        engine.setRate(1);
+        playMode = 'preview';
+        void engine.play();
+      } else {
+        engine.pause();
+      }
+      emitFrame();
     },
 
     seekPreview(seconds: number): void {
       if (!store.get().videoReady) return;
+      // v0.3.2 · 项7：队列持有播放权时先停队列（切断「拖进度条 → 队列跳段带速」串扰），转自由预览
+      if (scheduler) stopQueueInternal();
       engine.seek(seconds);
       emitFrame();
     },
@@ -618,6 +654,8 @@ export function createEditorController(opts: {
     nudgePreview(deltaSec: number): void {
       const st = store.get();
       if (!st.videoReady || !Number.isFinite(deltaSec)) return;
+      // v0.3.2 · 项7：同 seekPreview——队列持有播放权时先退出（scheduler 在即停）
+      if (scheduler) stopQueueInternal();
       const duration = st.videoDuration ?? activeConfig()?.video.duration ?? 0;
       const target = Math.min(duration, Math.max(0, engine.getTime() + deltaSec));
       engine.seek(target);
@@ -638,9 +676,13 @@ export function createEditorController(opts: {
       if (!cfg) return;
       const seg = cfg.segments.find((s) => s.id === id);
       if (!seg) return;
+      // v0.3.2 · 项7：有界播放中点选 → 先退出队列（调度器持有的 plan 随即作废），
+      // 再按 F2-AC2 以段首 @1x 自由预览起播（不携带段值速率）
+      if (scheduler) stopQueueInternal();
       store.update({ selectedSegmentId: id });
-      // F2 AC2：点段落条某段 → 播放头跳至该段起点并开始播放
       if (store.get().videoReady) {
+        engine.setRate(1);
+        playMode = 'preview';
         engine.seek(seg.start);
         void engine.play();
         emitFrame();

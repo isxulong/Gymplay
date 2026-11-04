@@ -696,3 +696,29 @@
   /* 与加粗播放头同强调色：「抓到了」反馈（v1.1 §3.1） */
   background: #4da3ff;
 }
+
+/* ---------- v0.3.2 · 项7：播放模式徽标（transport 行 playToggle 旁，三态配色） ---------- */
+.fvp-play-mode-badge {
+  display: inline-block;
+  flex: none;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+/* 预览（含 idle）：中性灰 */
+.fvp-play-mode-badge--preview {
+  color: #5f6368;
+  background: #eceff1;
+}
+/* 队列有界播放：蓝 */
+.fvp-play-mode-badge--queue {
+  color: #174ea6;
+  background: #e8f0fe;
+}
+/* 单段试听（Phase 4 接入）：橙 */
+.fvp-play-mode-badge--audit {
+  color: #a04000;
+  background: #feefe3;
+}
