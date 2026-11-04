@@ -283,7 +283,9 @@
 .tl__track {
   position: relative;
   height: 56px;
-  background: #10131a;
+  /* v0.3.2 · 项6：删除空洞斜纹灰轨道——段色块覆盖其上，只有空洞露出斜纹
+     （与未勾选段的 opacity 弱化两种语义不混用，UX-v1.1-F8） */
+  background: repeating-linear-gradient(45deg, #1a1e24 0 6px, #232830 6px 12px);
   border-radius: 8px;
   overflow: hidden;
   cursor: crosshair;
@@ -296,6 +298,12 @@
   opacity: 0.55;
   border-radius: 3px;
   cursor: pointer;
+}
+
+/* v0.3.2 · 项6：未勾选段视觉弱化——仅 opacity，严禁 pointer-events: none
+   （未勾选段必须仍可点选编辑/试听，弱化是视觉不是交互禁用） */
+.tl__seg--off {
+  opacity: 0.45;
 }
 
 .tl__seg--selected {

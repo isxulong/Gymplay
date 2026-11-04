@@ -37,7 +37,8 @@ import { formatClock } from './time-input';
 
 export interface TimelineModel {
   duration: number;
-  segments: Array<{ id: string; start: number; end: number; label: string; rate: number }>;
+  /** v0.3.2 · 项6：inQueue 可选（false → tl__seg--off 弱化，视觉语义不混用） */
+  segments: Array<{ id: string; start: number; end: number; label: string; rate: number; inQueue?: boolean }>;
   selectedId: string | null;
 }
 
@@ -309,7 +310,10 @@ export function createTimelineBar(callbacks: {
     const sorted = [...segments].sort((a, b) => a.start - b.start);
     sorted.forEach((seg, i) => {
       const block = h('div', {
-        class: `tl__seg${seg.id === model.selectedId ? ' tl__seg--selected' : ''}`,
+        // v0.3.2 · 项6：未勾选段视觉弱化（tl__seg--off）——仅 opacity，不禁 pointer-events
+        class: `tl__seg${seg.id === model.selectedId ? ' tl__seg--selected' : ''}${
+          seg.inQueue === false ? ' tl__seg--off' : ''
+        }`,
         'data-seg-id': seg.id,
         'data-testid': `timeline-seg-${seg.id}`,
         title: `${seg.label || `段 ${i + 1}`} ${formatTick(seg.start)}–${formatTick(seg.end)} · ${seg.rate}x`,
