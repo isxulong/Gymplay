@@ -14,6 +14,7 @@
     "test:coverage": "vitest run --coverage",
     "gate:size": "node scripts/check-size.mjs",
     "gate:pwa": "node scripts/check-pwa.mjs",
+    "gate:undo": "node scripts/gate-undo.mjs",
     "test:e2e": "playwright test"
   },
   "dependencies": {

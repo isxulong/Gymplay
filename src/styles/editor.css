@@ -748,3 +748,101 @@
   text-overflow: ellipsis;
   max-width: 9em;
 }
+
+
+/* ---------- v0.3.2 · 项2+10：多段撤销历史回收站 ---------- */
+
+/* 撤销横幅（UX-v1.1-N2 常驻语义）：中性蓝灰，与 conflict/warn 区分 */
+.fvp-banner--undo {
+  background: #10233a;
+  border: 1px solid #3f6ea8;
+}
+
+/* 回收站入口（header 常驻按钮，N=0 时 JS 置 hidden） */
+.fvp-btn--recycle {
+  min-height: 36px;
+}
+
+/* 回收站弹层（Phase 3 前简化内联面板：底部固定 + 半透明遮罩由容器承担） */
+.recycle-root {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+}
+.recycle {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  pointer-events: auto;
+}
+.recycle[hidden] {
+  display: none;
+}
+.recycle__sheet {
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: #1a1e24;
+  border: 1px solid #3a4048;
+  border-bottom: none;
+  border-radius: 14px 14px 0 0;
+  padding: 14px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.45);
+}
+.recycle__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.recycle__head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.recycle__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.recycle__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #12151a;
+  border: 1px solid #2a2f36;
+  font-size: 13px;
+}
+.recycle__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 截断 / 失配条目：置灰只读（BA-F-10） */
+.recycle__item--stale {
+  opacity: 0.45;
+}
+.recycle__note {
+  flex: none;
+  font-size: 11px;
+  color: var(--fvp-muted);
+}
+/* 恢复记录行（只读，不可再恢复） */
+.recycle__item--restore {
+  opacity: 0.65;
+}
+.recycle__warn {
+  margin: 0 0 8px;
+  font-size: 12px;
+}

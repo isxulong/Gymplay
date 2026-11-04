@@ -5,6 +5,7 @@
 
 import type { PlayerConfig } from '../core/config/schema';
 import type { Capabilities } from '../platform/capabilities';
+import type { UndoEntry } from './undo-store';
 
 export type AppMode = 'editor' | 'cockpit';
 
@@ -53,6 +54,15 @@ export interface AppState {
   wakeLockHint: boolean;
   /** 驾驶舱一次性提示（R13 降级路径）：Media Session 线控不可用 */
   lineControlHint: boolean;
+  /**
+   * v0.3.2 · 项2+10：撤销世界线栈（运行时镜像，持久化在独立键 fvp:undo-history，
+   * 不进分享密钥 / .json 导出；草稿态与存储降级时仅内存）。
+   */
+  undoStack: UndoEntry[];
+  /** v0.3.2 · 项2+10：回收站弹层开合（AB-P2-10 落点表） */
+  recycleOpen: boolean;
+  /** v0.3.2 · 项2+10：撤销横幅可见性（删除 push → true；dismissUndo / 清栈 / 恢复 → false） */
+  undoBannerVisible: boolean;
 }
 
 export const initialState: AppState = {
@@ -75,4 +85,7 @@ export const initialState: AppState = {
   notices: [],
   wakeLockHint: false,
   lineControlHint: false,
+  undoStack: [],
+  recycleOpen: false,
+  undoBannerVisible: false,
 };

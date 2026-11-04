@@ -47,6 +47,7 @@ import {
   type EditResult,
 } from '../core/config/edit';
 import type { PlayerConfig } from '../core/config/schema';
+import { validate } from '../core/config/schema';
 import { systemClock } from '../core/player/clock';
 import type { PlayerEngine } from '../core/player/engine';
 import { createNativeEngine } from '../core/player/native-engine';
@@ -67,6 +68,16 @@ import {
   resolveNoticeTiming,
   NOTICE_INFO_CAP,
 } from './notice-center';
+import {
+  markAllStale,
+  markStaleFrom,
+  pushUndoEntry,
+  saveUndoStack,
+  undoGate,
+  UNDO_STORAGE_KEY,
+  type UndoEntry,
+  type UndoKind,
+} from './undo-store';
 import type { AppState, NoticeKind } from './state';
 import type { Store } from './store';
 
@@ -126,6 +137,13 @@ export interface EditorController {
   duplicateEntry(index: number): void;
   removeEntry(index: number): void;
   setLoopMode(mode: PlayerConfig['loop']['mode'], count?: number): void;
+  /** v0.3.2 · 项2+10：恢复一次删除（世界线栈门禁 + 截断回退），entryId = UndoEntry.id */
+  undoDelete(entryId: number): void;
+  /** v0.3.2 · 项2+10：关闭撤销横幅（栈保留，回收站仍可恢复） */
+  dismissUndo(): void;
+  /** v0.3.2 · 项2+10：打开 / 关闭回收站弹层 */
+  openRecycle(): void;
+  closeRecycle(): void;
   playQueue(): void;
   stopQueue(): void;
   /** M2 驾驶舱：进入（自动从队列头开播；已在播则直接切入） */
@@ -380,6 +398,98 @@ export function createEditorController(opts: {
     return true;
   }
 
+  // ---------- v0.3.2 · 项2+10：撤销世界线栈 ----------
+
+  /**
+   * 撤销栈同步（规则 5）：storageDegraded ‖ 草稿态 → 仅内存不落盘；
+   * 写入失败（QuotaExceeded 丢最旧重试后仍失败）→ 降级会话内内存历史，
+   * 经既有 storageDegraded 通道联动文案 F。
+   */
+  function syncUndoStack(entries: UndoEntry[], bannerVisible: boolean): void {
+    const st = store.get();
+    store.update({ undoStack: entries, undoBannerVisible: bannerVisible });
+    if (st.storageDegraded || st.pendingKeyConfig !== null) return;
+    const saved = saveUndoStack(entries);
+    if (!saved.ok) store.update({ storageDegraded: true });
+  }
+
+  /** 清栈（世界线断裂即重启；同步移除横幅，规则 2 / UI 节）。 */
+  function clearUndoHistory(): void {
+    const st = store.get();
+    if (st.undoStack.length === 0 && !st.undoBannerVisible && !st.recycleOpen) return;
+    store.update({ undoStack: [], undoBannerVisible: false, recycleOpen: false });
+    if (!st.storageDegraded && st.pendingKeyConfig === null) {
+      try {
+        window.localStorage.removeItem(UNDO_STORAGE_KEY);
+      } catch {
+        /* 存储不可用：栈已仅存内存，无需处理 */
+      }
+    }
+  }
+
+  /** 栈内自增序号（跨会话恢复后从 max+1 续起，保证栈内唯一）。 */
+  function nextUndoId(entries: UndoEntry[]): number {
+    let max = 0;
+    for (const e of entries) if (e.id > max) max = e.id;
+    return max + 1;
+  }
+
+  /**
+   * 包装层（规则 2，BA-F-9 / AB-P1-4）：全部编辑提交统一入口，不改 commitEdit 本体。
+   * kind 映射：'delete-segment' / 'remove-entry' → 入栈；'restore' → 恢复记录（undoDelete 专用，
+   * 附截断上下文）；'none' → 清栈（调速 / 改名 / 边界 / 队列顺序 / 循环等世界线断裂编辑）。
+   * CI 静态断言（scripts/gate-undo.mjs）：controller.ts 中裸 commitEdit 调用数 == 0。
+   */
+  function commitEditTracked(
+    kind: UndoKind | 'none',
+    segLabel: string,
+    res: EditResult,
+    preCanonical: string | null,
+    restoreContext?: { truncateFrom: number; truncatedCount: number; targetPost: string },
+  ): boolean {
+    const ok = commitEdit(res); // gate-undo: 包装层内部唯一合法调用点
+    if (!ok || !res.ok) return false;
+    const st = store.get();
+    if (kind === 'none') {
+      clearUndoHistory();
+      return true;
+    }
+    if (kind === 'restore' && restoreContext && preCanonical !== null) {
+      // 规则 4：截断 entries[i..top]（保留只读展示）→ push 恢复记录
+      //（restore 豁免链式 push 条件，维护 top.post === current 不变量，连按 undo 连续回退可行）
+      const truncated = markStaleFrom(st.undoStack, restoreContext.truncateFrom);
+      const record: UndoEntry = {
+        id: nextUndoId(st.undoStack),
+        createdAt: Date.now(),
+        kind: 'restore',
+        segLabel,
+        pre: preCanonical,
+        post: restoreContext.targetPost,
+      };
+      syncUndoStack(pushUndoEntry(truncated, record), false);
+      const n = restoreContext.truncatedCount;
+      notify(
+        'info',
+        n > 1
+          ? `已恢复到删除「${segLabel}」之前（之后的 ${n - 1} 次删除一并回退）`
+          : `已恢复到删除「${segLabel}」之前。`,
+      );
+      return true;
+    }
+    // 删除类（规则 1）：pre === top.post 链式追加；失配清栈重启（fail-fast）
+    if (preCanonical === null) return true;
+    const entry: UndoEntry = {
+      id: nextUndoId(st.undoStack),
+      createdAt: Date.now(),
+      kind,
+      segLabel,
+      pre: preCanonical,
+      post: canonicalize(res.value),
+    };
+    syncUndoStack(pushUndoEntry(st.undoStack, entry), true);
+    return true;
+  }
+
   function queueFrame(): QueueFrame {
     if (!scheduler) {
       return { playing: false, paused: video.paused, queueIndex: -1, queueTotal: 0, segmentId: null, rate: 1, remainingMs: 0, loopsDone: 0 };
@@ -516,10 +626,12 @@ export function createEditorController(opts: {
     const actual = video.duration;
     const st = store.get();
     const existing = activeConfig();
+    let worldLineBroken = false;
 
     if (existing) {
       // 恢复 / 密钥配置与新视频配对：钳制校验（F8 AC5）
       const aligned = alignConfigToVideo(existing, file.name, actual);
+      worldLineBroken = canonicalize(aligned) !== canonicalize(existing);
       if (st.pendingKeyConfig !== null) {
         store.update({ pendingKeyConfig: aligned });
       } else {
@@ -543,6 +655,9 @@ export function createEditorController(opts: {
       selectedSegmentId: null,
       shareLink: null,
     });
+    // 项2：视频重新配对触发边界钳制（alignConfigToVideo 实际改变配置）→ 世界线断裂，清栈；
+    // 无变化（同名同时长重装，reload 场景）不清——栈顶世界线门禁（规则 3）兜底其余失配
+    if (worldLineBroken) clearUndoHistory();
     if (loaded.hint === 'hevc-passthrough') notify('info', COPY_HEVC_PASSTHROUGH);
     emitFrame();
   }
@@ -571,6 +686,8 @@ export function createEditorController(opts: {
       notify('info', '这份配置与当前内容一致，无需导入。');
       return;
     }
+    // 项2：导入 = 世界线断裂（无论走草稿还是直接生效）→ 清栈
+    clearUndoHistory();
     if (st.config !== null) {
       // F7 AC3：本地有配置 → 草稿态挂起，不写本地存储
       store.update({ pendingKeyConfig: cfg });
@@ -620,6 +737,9 @@ export function createEditorController(opts: {
       });
       persistence.clear();
       writeKeyToLocation(null);
+      // 项2（D-4 细则否决）：换视频清空整表 = 世界线断裂重启 → 清栈（不入栈：undo 快照
+      // 只存配置不存媒体，恢复将产生「段边界指向另一部视频」的悬空配置）
+      clearUndoHistory();
       await doImport(file);
     },
 
@@ -668,7 +788,7 @@ export function createEditorController(opts: {
       // 打点期间停队列播放，避免调度器持有过期 plan
       stopQueueInternal();
       engine.pause();
-      commitEdit(splitSegmentAt(mustConfig(), engine.getTime()));
+      commitEditTracked('none', '', splitSegmentAt(mustConfig(), engine.getTime()), null);
     },
 
     selectSegment(id: string): void {
@@ -691,48 +811,121 @@ export function createEditorController(opts: {
 
     setRate(id, rate) {
       stopIfPlayingBeforeEdit();
-      commitEdit(setSegmentRate(mustConfig(), id, rate));
+      commitEditTracked('none', '', setSegmentRate(mustConfig(), id, rate), null);
     },
 
     rename(id, label) {
-      commitEdit(renameSegment(mustConfig(), id, label));
+      commitEditTracked('none', '', renameSegment(mustConfig(), id, label), null);
     },
 
     setBounds(id, start, end) {
       stopIfPlayingBeforeEdit();
-      return commitEdit(updateSegmentBounds(mustConfig(), id, start, end));
+      return commitEditTracked('none', '', updateSegmentBounds(mustConfig(), id, start, end), null);
     },
 
     removeSegment(id) {
       stopIfPlayingBeforeEdit();
-      if (commitEdit(deleteSegment(mustConfig(), id)) && store.get().selectedSegmentId === id) {
+      // 项2：删除前快照（pre）与可读标签先行捕获，再走删除编辑
+      const cfg = mustConfig();
+      const seg = cfg.segments.find((s) => s.id === id);
+      const pre = canonicalize(cfg);
+      const label = seg?.label || `段 ${(cfg.segments.findIndex((s) => s.id === id) + 1) || '未命名'}`;
+      if (
+        commitEditTracked('delete-segment', label, deleteSegment(cfg, id), pre) &&
+        store.get().selectedSegmentId === id
+      ) {
         store.update({ selectedSegmentId: null });
       }
     },
 
     toggleQueue(id, inQueue) {
       stopIfPlayingBeforeEdit();
-      commitEdit(setInQueue(mustConfig(), id, inQueue));
+      commitEditTracked('none', '', setInQueue(mustConfig(), id, inQueue), null);
     },
 
     moveEntry(from, to) {
       stopIfPlayingBeforeEdit();
-      commitEdit(moveSequenceEntry(mustConfig(), from, to));
+      commitEditTracked('none', '', moveSequenceEntry(mustConfig(), from, to), null);
     },
 
     duplicateEntry(index) {
       stopIfPlayingBeforeEdit();
-      commitEdit(duplicateSequenceEntry(mustConfig(), index));
+      commitEditTracked('none', '', duplicateSequenceEntry(mustConfig(), index), null);
     },
 
     removeEntry(index) {
       stopIfPlayingBeforeEdit();
-      commitEdit(removeSequenceEntry(mustConfig(), index));
+      // 项10：队列项删除前快照；标签取该队列项引用的段名
+      const cfg = mustConfig();
+      const refId = cfg.sequence[index];
+      const seg = refId !== undefined ? cfg.segments.find((s) => s.id === refId) : undefined;
+      const pre = canonicalize(cfg);
+      commitEditTracked('remove-entry', seg?.label || '未命名段', removeSequenceEntry(cfg, index), pre);
     },
 
     setLoopMode(mode, count) {
       stopIfPlayingBeforeEdit();
-      commitEdit(setLoop(mustConfig(), mode, count));
+      commitEditTracked('none', '', setLoop(mustConfig(), mode, count), null);
+    },
+
+    undoDelete(entryId: number): void {
+      const st = store.get();
+      const stack = st.undoStack;
+      const idx = stack.findIndex((e) => e.id === entryId && !e.stale && e.kind !== 'restore');
+      if (idx < 0) return;
+      const cfg = activeConfig();
+      if (!cfg) return;
+      const currentCanonical = canonicalize(cfg);
+      // 规则 3：栈顶世界线门禁——失配 → 会话内置灰不清栈 + warn（呈现层），跨会话层由 bootstrap 整栈丢弃
+      if (!undoGate(stack, currentCanonical)) {
+        syncUndoStack(markAllStale(stack), false);
+        notify('warn', '当前编排已变化，历史记录已失效');
+        return;
+      }
+      const entry = stack[idx];
+      // 规则 4：恢复也是编辑——编辑即停 + validate(entry.pre) 后经包装层走既有 commitEdit
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(entry.pre);
+      } catch {
+        clearUndoHistory();
+        notify('warn', '历史记录已损坏，无法恢复');
+        return;
+      }
+      const res = validate(parsed);
+      if (!res.ok) {
+        clearUndoHistory();
+        notify('warn', '历史记录已损坏，无法恢复');
+        return;
+      }
+      stopIfPlayingBeforeEdit();
+      const truncatedCount = stack.slice(idx).filter((e) => !e.stale).length;
+      const targetPost = canonicalize(res.value);
+      if (targetPost === currentCanonical) {
+        // 恢复目标与现状一致（如恢复记录回放）：只置灰不重放提交
+        syncUndoStack(markStaleFrom(stack, idx), false);
+        return;
+      }
+      commitEditTracked('restore', entry.segLabel, res, currentCanonical, {
+        truncateFrom: idx,
+        truncatedCount,
+        targetPost,
+      });
+    },
+
+    dismissUndo(): void {
+      if (!store.get().undoBannerVisible) return;
+      store.update({ undoBannerVisible: false });
+    },
+
+    openRecycle(): void {
+      if (store.get().recycleOpen) return;
+      store.update({ recycleOpen: true });
+    },
+
+    closeRecycle(): void {
+      if (!store.get().recycleOpen) return;
+      store.update({ recycleOpen: false });
     },
 
     playQueue(): void {
@@ -790,7 +983,7 @@ export function createEditorController(opts: {
 
     setLoopLive(mode, count) {
       const normalized = mode === 'queue' && count !== undefined && count > 0 ? Math.floor(count) : 0;
-      if (!commitEdit(setLoop(mustConfig(), mode, count))) return;
+      if (!commitEditTracked('none', '', setLoop(mustConfig(), mode, count), null)) return;
       // 热切换：调度器就地更新循环语义，不打断当前段（重编译会重置播放位置）
       scheduler?.setLoop({ mode, count: normalized });
       emitFrame();
@@ -904,6 +1097,8 @@ export function createEditorController(opts: {
       });
       persistence.saveNow(next);
       writeKeyToLocation(null);
+      // 项2：草稿转正 = 世界线切换 → 清栈（草稿期栈本就仅内存）
+      clearUndoHistory();
       notify('info', '已应用分享编排并保存到本机。');
     },
 
@@ -911,6 +1106,8 @@ export function createEditorController(opts: {
       if (!store.get().pendingKeyConfig) return;
       store.update({ pendingKeyConfig: null, selectedSegmentId: null });
       writeKeyToLocation(null);
+      // 项2：丢弃草稿回到本地编排 → 清栈
+      clearUndoHistory();
       notify('info', '已保留本地编排，分享的草稿已丢弃。');
     },
 

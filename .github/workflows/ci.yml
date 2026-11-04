@@ -27,6 +27,9 @@ jobs:
         run: npm run gate:size
       - name: PWA 门禁（manifest / sw.js / 注册代码）
         run: npm run gate:pwa
+      # v0.3.2 · 项2+10 守护（AB-P1-4）：编辑提交必须全部经 commitEditTracked 包装层
+      - name: 撤销栈门禁（controller.ts 裸 commitEdit( == 0）
+        run: npm run gate:undo
 
   e2e:
     runs-on: ubuntu-latest

@@ -19,9 +19,12 @@ import {
 } from '../app/controller';
 import type { AppState } from '../app/state';
 import type { Store } from '../app/store';
+import { topActiveDeletion, activeUndoEntries } from '../app/undo-store';
+import type { RecycleView } from './editor/recycle-view';
 import { h, mount, on } from './dom';
 import { createTimelineBar, type TimelineBar } from './editor/timeline-bar';
 import { renderQueue } from './editor/queue-view';
+import { createRecycleView } from './editor/recycle-view';
 import { formatClock, parseTimeInput } from './editor/time-input';
 
 /** 文案 A · 视频源限制（需求稿成稿，空状态页 + 导入区常驻） */
@@ -85,6 +88,12 @@ export function createEditorView(root: HTMLElement): EditorView {
   }) as HTMLInputElement;
 
   const saveState = h('span', { class: 'fvp-save-state', 'data-testid': 'save-state' });
+  // v0.3.2 · 项2+10：回收站入口（header 常驻按钮，N=0 隐藏；计数随 store 重渲染）
+  const recycleBinBtn = h(
+    'button',
+    { class: 'fvp-btn fvp-btn--recycle', 'data-testid': 'recycle-bin' },
+    '🗑 回收站',
+  );
   // v0.3.2 · 项1（C1 裁决）：单一 banners 容器拆为两个兄弟容器——
   // notice-stack（sticky 吸顶，承载通知）+ banner-stack（文档流原位，承载决策横幅）。
   // 显式标注：notice-stack 的 sticky 不改写 UX-v1.1-C6——C6 仅约束决策横幅，决策横幅随文档流。
@@ -222,6 +231,11 @@ export function createEditorView(root: HTMLElement): EditorView {
 
   // 需重新选择视频（恢复 / 密钥配置等待配对）
   const needsVideoText = h('p', { 'data-testid': 'needs-video-text' });
+
+  // v0.3.2 · 项2+10：回收站弹层容器（Phase 3 前简化内联面板；controller 就绪后在 bind 内挂载）
+  const recycleRoot = h('div', { class: 'recycle-root' });
+  let recycleView: RecycleView | null = null;
+
   const needsVideoGuide = h('p', { class: 'fvp-muted', 'data-testid': 'needs-video-guide' });
   const needsVideoBtn = h('button', { class: 'fvp-btn fvp-btn--primary', 'data-testid': 'needs-video-pick' }, '📂 选择视频文件');
   const needsVideoPane = h(
@@ -238,12 +252,13 @@ export function createEditorView(root: HTMLElement): EditorView {
     h(
       'div',
       { class: 'fvp' },
-      h('header', { class: 'fvp__header' }, h('h1', {}, 'Gymplay · 编辑器'), saveState),
+      h('header', { class: 'fvp__header' }, h('h1', {}, 'Gymplay · 编辑器'), recycleBinBtn, saveState),
       noticeStack,
       bannerStack,
       emptyState,
       needsVideoPane,
       editorMain,
+      recycleRoot,
     ),
     fileInput,
     configFileInput,
@@ -268,6 +283,10 @@ export function createEditorView(root: HTMLElement): EditorView {
 
     // v0.3.2 · 项3：换视频按钮走同一 file-input 通道（确认横幅/同名 no-op/停队列复用既有链）
     on(changeVideoBtn, 'click', () => fileInput.click());
+    // v0.3.2 · 项2+10：回收站开合
+    on(recycleBinBtn, 'click', () => controller.openRecycle());
+    recycleView = createRecycleView(controller);
+    recycleRoot.append(recycleView.el);
     on(emptyImportBtn, 'click', () => configFileInput.click());
     on(playToggle, 'click', () => controller.togglePlay());
     on(markBtn, 'click', () => controller.mark());
@@ -407,6 +426,12 @@ export function createEditorView(root: HTMLElement): EditorView {
 
     renderBanners(state, controller);
 
+    // v0.3.2 · 项2+10：回收站入口计数（N = 可恢复删除步数；N=0 隐藏）+ 弹层渲染
+    const recoverable = state.undoStack.filter((e) => !e.stale && e.kind !== 'restore').length;
+    recycleBinBtn.hidden = recoverable === 0;
+    recycleBinBtn.textContent = `🗑 回收站 (${recoverable})`;
+    recycleView?.render(state);
+
     // 需配对视频提示
     if (cfg && !state.videoReady) {
       needsVideoText.textContent = `当前编排对应视频文件「${cfg.video.filename}」（${formatTime(cfg.video.duration)}）。本地文件无法跨会话保留，请重新选择同一文件。`;
@@ -450,6 +475,30 @@ export function createEditorView(root: HTMLElement): EditorView {
   function renderBanners(state: AppState, controller: EditorController): void {
     // v0.3.2 · 项1（C1 裁决）：决策横幅（常驻、无计时）挂 banner-stack（文档流原位）
     const decisionNodes: Node[] = [];
+
+    // v0.3.2 · 项2+10：撤销横幅（UX-v1.1-N2 常驻语义）——删除后置顶渲染；
+    // [撤销] = undo(栈顶最近可恢复删除)；[知道了] = dismissUndo（栈保留，回收站仍可恢复）
+    if (state.undoBannerVisible) {
+      const top = topActiveDeletion(state.undoStack);
+      if (top) {
+        const rest = activeUndoEntries(state.undoStack).filter((e) => e.kind !== 'restore').length - 1;
+        const text =
+          (top.kind === 'remove-entry' ? `已删除队列项「${top.segLabel}」` : `已删除段「${top.segLabel}」`) +
+          (rest > 0 ? `（回收站内还有 ${rest} 步可恢复）` : '');
+        const undoBtn = h('button', { class: 'fvp-btn fvp-btn--primary', 'data-testid': 'undo-restore' }, '撤销');
+        on(undoBtn, 'click', () => controller.undoDelete(top.id));
+        const dismissBtn = h('button', { class: 'fvp-btn', 'data-testid': 'undo-dismiss' }, '知道了');
+        on(dismissBtn, 'click', () => controller.dismissUndo());
+        decisionNodes.push(
+          h(
+            'div',
+            { class: 'fvp-banner fvp-banner--undo', 'data-testid': 'undo-banner' },
+            h('p', {}, text),
+            h('div', { class: 'fvp-banner__ops' }, undoBtn, dismissBtn),
+          ),
+        );
+      }
+    }
 
     // F7 AC3 冲突横幅：本地有配置 + 打开分享链接 → 草稿态预览
     if (state.pendingKeyConfig) {

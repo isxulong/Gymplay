@@ -17,6 +17,7 @@ import { readKeyFromLocation } from '../core/config/hash';
 import { createPersistence, type Persistence } from '../core/config/persistence';
 import type { PlayerConfig } from '../core/config/schema';
 import { detectCapabilities } from '../platform/capabilities';
+import { restoreUndoStack, readUndoRaw } from './undo-store';
 import { createStore, type Store } from './store';
 import { initialState, type AppState, type Notice } from './state';
 
@@ -69,6 +70,11 @@ export function bootstrap(): AppContext {
     persistence.saveNow(keyConfig); // 无本地配置：密钥直接生效并落盘
   }
 
+  // 4. v0.3.2 · 项2+10：撤销栈启动恢复（规则 5）——逐条 validate + 栈顶世界线校验，
+  //    任一失败 / 失配 → 整栈丢弃（数据层兜底；会话内的「置灰不清栈」分层在 controller）。
+  //    草稿态挂起时本地配置仍是世界线基准（草稿应用 / 丢弃都会清栈，见 controller）。
+  const undoRestored = restoreUndoStack(readUndoRaw(), config);
+
   const store = createStore<AppState>({
     ...initialState,
     capabilities,
@@ -77,6 +83,9 @@ export function bootstrap(): AppContext {
     pendingKeyConfig,
     needsVideo: config !== null,
     notices,
+    undoStack: undoRestored.entries,
+    // 重放横幅：栈里有可恢复的删除条目时恢复可见（回收站计数由 undoStack 派生）
+    undoBannerVisible: undoRestored.entries.some((e) => !e.stale && e.kind !== 'restore'),
   });
 
   persistence.onDegraded(() => store.update({ storageDegraded: true }));
