@@ -54,7 +54,7 @@ async function setupLoadedEditor(page: import('@playwright/test').Page): Promise
   }, JSON.stringify(buildConfig()));
   await page.goto('/');
   await page.getByTestId('file-input').setInputFiles(FIXTURE_PATH);
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(2);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(2);
   await expect(page.getByTestId('change-video')).toBeVisible();
 }
 
@@ -76,7 +76,7 @@ test('v0.3.2 · 项3：换视频 → 确认 → 配置清空重建（确认横�
   // 确认 → 清空重建：原配置段（热身/冲刺）清空，新视频以初始默认段重建（整段「段 1」）
   await page.getByTestId('replace-confirm').click();
   await expect(banner).toHaveCount(0);
-  const segs = page.getByTestId('segment-list').getByRole('button');
+  const segs = page.getByTestId('segment-list').locator('.segment');
   await expect(segs).toHaveCount(1);
   await expect(segs.first()).toContainText('段 1');
   await expect(segs.first()).not.toContainText('热身');
@@ -98,7 +98,7 @@ test('v0.3.2 · 项3：换视频 → 取消 → 原配置原样保留', async ({
   // 取消 → 配置原样：2 段保留、横幅关闭、视频未换
   await page.getByTestId('replace-cancel').click();
   await expect(page.getByTestId('replace-banner')).toHaveCount(0);
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(2);
-  await expect(page.getByTestId('segment-list').getByRole('button').first()).toContainText('热身');
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(2);
+  await expect(page.getByTestId('segment-list').locator('.segment').first()).toContainText('热身');
   await expect(page.getByTestId('time-label')).toContainText('0:10');
 });

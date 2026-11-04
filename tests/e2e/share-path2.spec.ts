@@ -24,9 +24,9 @@ test('路径2：分享链接新开页面完整还原编排', async ({ page, brow
   await page.getByTestId('mark-button').click();
   await seek(5);
   await page.getByTestId('mark-button').click();
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(3);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(3);
 
-  const segs = page.getByTestId('segment-list').getByRole('button');
+  const segs = page.getByTestId('segment-list').locator('.segment');
   // 段1 命名「热身组」+ 0.5x
   await segs.nth(0).click();
   await page.getByTestId('detail-label').fill('热身组');
@@ -63,7 +63,7 @@ test('路径2：分享链接新开页面完整还原编排', async ({ page, brow
     await expect(page2.getByTestId('needs-video-guide')).toContainText('训练编排');
 
     // 分段 / 速度 / 勾选 / 顺序 / 循环完整还原（无需视频即可预览编排）
-    const segs2 = page2.getByTestId('segment-list').getByRole('button');
+    const segs2 = page2.getByTestId('segment-list').locator('.segment');
     await expect(segs2).toHaveCount(3);
     await expect(segs2.nth(0)).toContainText('热身组');
     await expect(segs2.nth(0)).toContainText('0.5x');

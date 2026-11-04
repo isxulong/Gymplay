@@ -17,7 +17,7 @@ import { initialState, type AppState } from '../../../src/app/state';
 import { makeConfig, makeSegment } from '../helpers';
 import type { Persistence } from '../../../src/core/config/persistence';
 import type { PlayerConfig } from '../../../src/core/config/schema';
-import type { EditorController } from '../../../src/app/controller';
+import type { EditorController, PlayMode, QueueFrame } from '../../../src/app/controller';
 import type { PlayerEngine } from '../../../src/core/player/engine';
 
 // ---- node 环境全局 stub（须在动态 import controller 前安装） ----
@@ -136,5 +136,134 @@ describe('v0.3.2 · 项7：变速隔离（FakeEngine 指令序列）', () => {
     expect(ops.indexOf('seek(10)')).toBeLessThan(ops.indexOf('play'));
     // 不携带被点段的段值速率 1.5
     expect(ops).not.toContain('setRate(1.5)');
+  });
+});
+
+
+
+// ---- v0.3.2 · 项9：单段试听（audit 状态机 + 15 行打断语义矩阵核心路径） ----
+
+const { resolvePlayAction } = await import('../../../src/app/controller');
+
+describe('v0.3.2 · 项9：resolvePlayAction 纯函数矩阵（矩阵 #1）', () => {
+  const cases: Array<[PlayMode, boolean, string]> = [
+    ['idle', true, 'preview-play'],
+    ['idle', false, 'preview-pause'],
+    ['preview', true, 'preview-play'],
+    ['preview', false, 'preview-pause'],
+    ['queue', true, 'resume'],
+    ['queue', false, 'pause'],
+    ['audit', true, 'resume'],
+    ['audit', false, 'pause'],
+  ];
+  for (const [mode, paused, expected] of cases) {
+    it(`${mode} × paused=${paused} → ${expected}`, () => {
+      expect(resolvePlayAction(mode, paused)).toBe(expected);
+    });
+  }
+});
+
+describe('v0.3.2 · 项9：auditScheduler 与 queueFrame 隔离（BA-F-4）+ 打断矩阵', () => {
+  function auditConfig(): PlayerConfig {
+    return makeConfig({
+      segments: [
+        makeSegment({ id: 'aaa000', start: 0, end: 10, rate: 2, label: 'A' }),
+        makeSegment({ id: 'bbb111', start: 10, end: 20, rate: 1.5, label: 'B' }),
+      ],
+      sequence: ['aaa000', 'bbb111'],
+    });
+  }
+
+  it('BA-F-4：试听期队列帧为空态（queueIndex=-1）且 audit 字段随帧下发', () => {
+    const { engine, controller } = setup(auditConfig());
+    const frames: QueueFrame[] = [];
+    controller.onFrame((_t, q) => { frames.push(q); });
+    controller.startAudition('aaa000');
+    expect(frames[frames.length - 1]?.queueIndex).toBe(-1);
+    expect(frames[frames.length - 1]?.queueTotal).toBe(0);
+    expect(frames[frames.length - 1]?.auditSegmentId).toBe('aaa000');
+    expect(frames[frames.length - 1]?.auditRate).toBe(2);
+    expect(engine.opSummary()).toContain('setRate(2)');
+  });
+
+  it('矩阵 #1：试听中 togglePlay 暂停/续播，不退出、速率保持段值', () => {
+    const { engine, controller, video } = setup(auditConfig());
+    controller.startAudition('aaa000');
+    engine.ops.length = 0;
+    // 播放中 → pause（stub video.paused 起播后仍 true，先模拟播放态）
+    (video as { paused: boolean }).paused = false;
+    controller.togglePlay();
+    expect(engine.opSummary()).toContain('pause');
+    expect(engine.opSummary()).not.toContain('setRate(1)');
+    (video as { paused: boolean }).paused = true;
+    engine.ops.length = 0;
+    controller.togglePlay();
+    expect(engine.opSummary()).toContain('play');
+    expect(engine.opSummary()).not.toContain('setRate(1)');
+  });
+
+  it('矩阵 #6：调速作用于试听中的段 → 就地生效不打断（无 pause/play，setRate 新值）', () => {
+    const { engine, controller } = setup(auditConfig());
+    controller.startAudition('aaa000');
+    engine.ops.length = 0;
+    controller.setRate('aaa000', 1.5);
+    const ops = engine.opSummary();
+    expect(ops).toContain('setRate(1.5)');
+    expect(ops).not.toContain('pause');
+    expect(ops).not.toContain('play');
+    // 段字段已提交（rate 1.5 生效于配置）
+    const frames: QueueFrame[] = [];
+    controller.onFrame((_t, q) => { frames.push(q); });
+    controller.exitAudition();
+    expect(frames[frames.length - 1]?.auditSegmentId).toBeNull();
+  });
+
+  it('矩阵 #7：调速作用于其他段 → 停止试听（速率归 1）', () => {
+    const { engine, controller } = setup(auditConfig());
+    controller.startAudition('aaa000');
+    engine.ops.length = 0;
+    const frames: QueueFrame[] = [];
+    controller.onFrame((_t, q) => { frames.push(q); });
+    controller.setRate('bbb111', 1);
+    expect(engine.opSummary()).toContain('setRate(1)');
+    expect(frames[frames.length - 1]?.auditSegmentId).toBeNull();
+  });
+
+  it('矩阵 #2：seekPreview 退出试听（归 1x + seek 到目标位）', () => {
+    const { engine, controller } = setup(auditConfig());
+    controller.startAudition('aaa000');
+    engine.ops.length = 0;
+    controller.seekPreview(15);
+    const ops = engine.opSummary();
+    expect(ops).toContain('setRate(1)');
+    expect(ops).toContain('seek(15)');
+    expect(ops.indexOf('setRate(1)')).toBeLessThan(ops.indexOf('seek(15)'));
+  });
+
+  it('矩阵 #12：stopQueue 停止试听', () => {
+    const { engine, controller } = setup(auditConfig());
+    controller.startAudition('aaa000');
+    engine.ops.length = 0;
+    controller.stopQueue();
+    expect(engine.opSummary()).toContain('setRate(1)');
+    expect(engine.opSummary()).toContain('pause');
+  });
+
+  it('矩阵 #10 + BA-F-13：自然播完（含越界路径）→ onFinish → 归 1x / idle / 徽标回预览', async () => {
+    const { engine, controller } = setup(auditConfig());
+    controller.startAudition('aaa000');
+    const frames: QueueFrame[] = [];
+    controller.onFrame((_t, q) => { frames.push(q); });
+    // 推进媒体时间越过段末（rVFC=false → 50ms 轮询），tick 触发 advancePastEnd → onFinish
+    engine.time = 10.5;
+    await new Promise((r) => setTimeout(r, 300));
+    const rates = engine.ops.filter((op) => op.type === 'setRate').map((op) => op.rate);
+    expect(rates[rates.length - 1]).toBe(1);
+    expect(frames[frames.length - 1]?.auditSegmentId).toBeNull();
+    // 调度器已停：再次 startAudition 可重启（幂等重建，矩阵 #4）
+    engine.ops.length = 0;
+    controller.startAudition('aaa000');
+    expect(engine.opSummary()).toContain('setRate(2)');
+    expect(engine.opSummary()).toContain('seek(0)');
   });
 });

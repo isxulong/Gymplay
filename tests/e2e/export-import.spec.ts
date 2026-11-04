@@ -64,7 +64,7 @@ test('M3 门禁：>50 段超链接上限引导导出，导出→导入后 60 段
     window.localStorage.setItem('fvp:config', json);
   }, JSON.stringify(buildLargeConfig()));
   await page.goto('/');
-  const segs = page.getByTestId('segment-list').getByRole('button');
+  const segs = page.getByTestId('segment-list').locator('.segment');
   await expect(segs).toHaveCount(60);
 
   // —— 超 1500 判定线：不生成链接，引导导出（验收 b） ——
@@ -98,7 +98,7 @@ test('M3 门禁：>50 段超链接上限引导导出，导出→导入后 60 段
     // 直接生效 → 待配对视频引导；60 段完整还原（验收 a）
     await expect(page2.getByTestId('needs-video')).toBeVisible();
     await expect(page2.getByTestId('needs-video-text')).toContainText('fixture-vp8-opus-10s.webm');
-    const segs2 = page2.getByTestId('segment-list').getByRole('button');
+    const segs2 = page2.getByTestId('segment-list').locator('.segment');
     await expect(segs2).toHaveCount(60);
     // 抽查辨识点：段名/速度/取消勾选
     await expect(segs2.nth(0)).toContainText('热身');
@@ -117,7 +117,7 @@ test('M3 门禁：>50 段超链接上限引导导出，导出→导入后 60 段
     await expect(page2.getByTestId('needs-video')).toBeHidden();
     await expect(page2.getByTestId('notice').filter({ hasText: '可能不是同一份视频' })).toHaveCount(0);
     // 配对后 60 段仍完整在列（未被钳制丢弃）
-    await expect(page2.getByTestId('segment-list').getByRole('button')).toHaveCount(60);
+    await expect(page2.getByTestId('segment-list').locator('.segment')).toHaveCount(60);
   } finally {
     await ctx2.close();
   }
@@ -133,18 +133,18 @@ test('M3：空态导入入口可用；粘贴 .json 配置文本装入并走草�
     buffer: jsonBuffer(JSON.stringify(buildLargeConfig())),
   });
   await expect(page.getByTestId('needs-video')).toBeVisible();
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(60);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(60);
   await expect(page.getByTestId('notice').filter({ hasText: '配置已导入' })).toBeVisible();
 
   // —— 编辑器密钥框粘贴另一份配置 JSON（50 段）→ 草稿态挂起 ——
   await page.getByTestId('key-input').fill(JSON.stringify(buildLargeConfig(50)));
   await page.getByTestId('key-import').click();
   await expect(page.getByTestId('conflict-banner')).toBeVisible();
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(50); // 草稿预览
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(50); // 草稿预览
   // —— 应用草稿 → 转正为生效配置 ——
   await page.getByTestId('conflict-apply').click();
   await expect(page.getByTestId('conflict-banner')).toHaveCount(0);
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(50);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(50);
   await expect(page.getByTestId('notice').filter({ hasText: '已应用分享编排' })).toBeVisible();
 });
 
@@ -167,7 +167,7 @@ test('M3：本地已有配置时导入 .json 走草稿态（F7 AC3），应用�
     window.localStorage.setItem('fvp:config', json);
   }, JSON.stringify(small));
   await page.goto('/');
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(3);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(3);
 
   // 导入大配置 → 草稿挂起
   const big = buildLargeConfig();
@@ -177,10 +177,10 @@ test('M3：本地已有配置时导入 .json 走草稿态（F7 AC3），应用�
     buffer: jsonBuffer(JSON.stringify(big)),
   });
   await expect(page.getByTestId('conflict-banner')).toBeVisible();
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(60); // 草稿预览
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(60); // 草稿预览
   // 应用草稿 → 转正为生效配置
   await page.getByTestId('conflict-apply').click();
   await expect(page.getByTestId('conflict-banner')).toHaveCount(0);
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(60);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(60);
   await expect(page.getByTestId('save-state')).toContainText('已自动保存');
 });

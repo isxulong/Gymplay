@@ -42,6 +42,11 @@ export interface AppState {
   selectedSegmentId: string | null;
   /** 队列播放中（SegmentScheduler 持有播放权） */
   queuePlaying: boolean;
+  /**
+   * v0.3.2 · 项9：单段试听中的段 id（audit 态运行时字段，不进配置/密钥/快照）。
+   * 与 playMode='audit' 同生命周期维护。
+   */
+  auditSegmentId: string | null;
   /** F1 AC3：已装载视频时再选新文件 → 待确认「导入新视频将清空当前分段配置」 */
   confirmReplaceOpen: boolean;
   /** 分享面板：文案 B 确认 → 生成链接 */
@@ -78,6 +83,7 @@ export const initialState: AppState = {
   needsVideo: false,
   selectedSegmentId: null,
   queuePlaying: false,
+  auditSegmentId: null,
   confirmReplaceOpen: false,
   shareConfirmOpen: false,
   shareLink: null,

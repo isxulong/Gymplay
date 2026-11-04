@@ -40,7 +40,7 @@ test('路径3：驾驶舱跟练（首屏三要素 / 倒计时 / 跳段 / 误触�
   // 打点：t=6 → [0,6]@1x + [6,10]，段2 = 2x
   await seekVideo(page, 6);
   await page.getByTestId('mark-button').click();
-  const segs = page.getByTestId('segment-list').getByRole('button');
+  const segs = page.getByTestId('segment-list').locator('.segment');
   await expect(segs).toHaveCount(2);
   await segs.nth(1).click();
   await page.getByTestId('rate-2').click();

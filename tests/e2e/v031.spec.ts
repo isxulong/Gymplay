@@ -65,7 +65,7 @@ test.describe('R1 时间轴可拖动播放头', () => {
     // 制造色块：t=2 打点 → [0,2] [2,10]
     await seekVideo(page, 2);
     await page.getByTestId('mark-button').click();
-    await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(2);
+    await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(2);
     expect(await isPaused(page)).toBe(true); // 打点即暂停，拖动前为暂停态
 
     // 从轨道 50%（色块上）拖到 80%：t 应落在 8s 附近
@@ -112,7 +112,7 @@ test.describe('R1 时间轴可拖动播放头', () => {
     await importFixture(page);
     await seekVideo(page, 2);
     await page.getByTestId('mark-button').click();
-    await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(2);
+    await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(2);
 
     await page.locator('.tl__seg[data-seg-id]').first().click();
     // 选中该段（详情出现）且跳段首自动播放（F2 AC2 不破）
@@ -296,7 +296,7 @@ test.describe('v0.3.1 补强（复核一 P2-1 / P2-2 / P3-1 / P3-3）', () => {
     await importFixture(page);
     await seekVideo(page, 2);
     await page.getByTestId('mark-button').click();
-    await page.getByTestId('segment-list').getByRole('button').first().click();
+    await page.getByTestId('segment-list').locator('.segment').first().click();
     await expect(page.getByTestId('detail-start')).toHaveValue('0:00.0');
     await expect(page.getByTestId('detail-end')).toHaveValue('0:02.0');
     const startInput = page.getByTestId('detail-start');
@@ -375,7 +375,7 @@ test.describe('R3 起止时间 mm:ss.s', () => {
     await importFixture(page);
     await seekVideo(page, 2);
     await page.getByTestId('mark-button').click();
-    await page.getByTestId('segment-list').getByRole('button').first().click();
+    await page.getByTestId('segment-list').locator('.segment').first().click();
     // AC1：显示为 mm:ss.s
     await expect(page.getByTestId('detail-start')).toHaveValue('0:00.0');
     await expect(page.getByTestId('detail-end')).toHaveValue('0:02.0');
@@ -385,7 +385,7 @@ test.describe('R3 起止时间 mm:ss.s', () => {
     await endInput.fill('0:01.5');
     await endInput.dispatchEvent('change');
     await expect(page.getByTestId('detail-end')).toHaveValue('0:01.5');
-    await expect(page.getByTestId('segment-list').getByRole('button').first()).toContainText('0:01.5');
+    await expect(page.getByTestId('segment-list').locator('.segment').first()).toContainText('0:01.5');
 
     // AC8：12:34.56 式多位小数四舍五入到 0.1s
     await endInput.fill('0:01.56');
@@ -419,7 +419,7 @@ test.describe('R3 起止时间 mm:ss.s', () => {
   test('AC3：视频满 1 小时显示并接受 h:mm:ss.s', async ({ page }) => {
     await page.goto('/');
     await page.getByTestId('config-file-input').setInputFiles(LONG_CONFIG);
-    await page.getByTestId('segment-list').getByRole('button').nth(1).click();
+    await page.getByTestId('segment-list').locator('.segment').nth(1).click();
     // 3723.4s → 1:02:03.4
     await expect(page.getByTestId('detail-start')).toHaveValue('1:02:03.4');
     // 输入 h:mm:ss.s 解析回秒并提交

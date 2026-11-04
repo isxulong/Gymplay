@@ -346,6 +346,35 @@
   gap: 8px;
 }
 
+/* v0.3.2 · 项9：段列表行容器（主条目 + 试听快捷入口并排，避免 button 嵌套） */
+.segment-row {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.segment-row > .segment {
+  flex: 1 1 auto;
+}
+.segment__audition {
+  flex: none;
+  align-self: center;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid #b0602a;
+  background: #feefe3;
+  color: #a04000;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.segment__audition--active {
+  background: #a04000;
+  color: #fff;
+}
+.fvp-btn--audit-active {
+  background: #a04000;
+}
+
 .segment {
   display: flex;
   flex-direction: column;

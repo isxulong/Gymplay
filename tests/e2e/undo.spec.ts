@@ -103,7 +103,7 @@ test('项2+10 · 删→undo→配置逐字一致 + 密钥字节相等 @m375', as
   // 撤销 → 配置回到删除前
   await page.getByTestId('undo-restore').click();
   await expect(page.getByTestId('undo-banner')).toBeHidden();
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(2);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(2);
   await page.waitForTimeout(600);
   const afterUndo = await readSavedConfig(page);
   expect(afterUndo).toBe(before); // 落盘配置逐字一致
@@ -118,7 +118,7 @@ test('项2+10 · 连删 3 段→恢复中间步→截断条目只读 @m375', asy
     await page.getByTestId(`segment-item-${id}`).click();
     await page.getByTestId('detail-delete').click();
   }
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(1);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(1);
   await expect(page.getByTestId('recycle-bin')).toHaveText('🗑 回收站 (3)');
 
   // 打开回收站，恢复中间步（C，栈下标 1）
@@ -128,7 +128,7 @@ test('项2+10 · 连删 3 段→恢复中间步→截断条目只读 @m375', asy
   await page.getByTestId('recycle-restore-1').click();
 
   // 配置回到「只删了 D」的世界线：A、B、C 三段回归
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(3);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(3);
   await expect(page.getByTestId('segment-item-bbb111')).toBeVisible();
   await expect(page.getByTestId('segment-item-ccc222')).toBeVisible();
   await expect(page.getByTestId('segment-item-ddd333')).toHaveCount(0);
@@ -178,7 +178,7 @@ test('项2+10 · 删→reload→重放横幅并可恢复', async ({ page }) => {
 
   // 重放后仍可撤销
   await page.getByTestId('undo-restore').click();
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(2);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(2);
   await page.waitForTimeout(600);
   const cfg = await readSavedConfig(page);
   expect(cfg).toContain('bbb111');

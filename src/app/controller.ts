@@ -51,7 +51,7 @@ import { validate } from '../core/config/schema';
 import { systemClock } from '../core/player/clock';
 import type { PlayerEngine } from '../core/player/engine';
 import { createNativeEngine } from '../core/player/native-engine';
-import { compilePlan } from '../core/scheduler/plan';
+import { compilePlan, type PlayPlan } from '../core/scheduler/plan';
 import { SegmentScheduler } from '../core/scheduler/scheduler';
 import { createMediaSession, type MediaSessionController } from '../platform/media-session';
 import {
@@ -109,6 +109,12 @@ export interface QueueFrame {
   rate: number;
   remainingMs: number;
   loopsDone: number;
+  /**
+   * v0.3.2 · 项9：试听态随帧下发（BA-F-4：queueFrame 恒读队列调度器，
+   * 试听期不误读队列数据；audit 态由 emitFrame 单独填充）。
+   */
+  auditSegmentId: string | null;
+  auditRate: number;
 }
 
 /**
@@ -117,6 +123,19 @@ export interface QueueFrame {
  * queue = 队列有界播放（恒段值）；audit = 单段试听（Phase 4 落地）。
  */
 export type PlayMode = 'idle' | 'preview' | 'queue' | 'audit';
+
+/** v0.3.2 · 项9：transport ▶/⏸ 的模式感知决策结果（纯函数矩阵，play-mode.test 覆盖） */
+export type ResolvedPlayAction = 'pause' | 'resume' | 'preview-play' | 'preview-pause';
+
+/**
+ * v0.3.2 · 项7+项9：transport ▶/⏸ 模式感知（矩阵 #1）。
+ * queue / audit = 有界播放暂停续播（rate 保持段值，不退出）；
+ * idle / preview = 自由预览起播（显式归 1x，F7′）或暂停。
+ */
+export function resolvePlayAction(mode: PlayMode, videoPaused: boolean): ResolvedPlayAction {
+  if (mode === 'queue' || mode === 'audit') return videoPaused ? 'resume' : 'pause';
+  return videoPaused ? 'preview-play' : 'preview-pause';
+}
 
 export interface EditorController {
   importFile(file: File): Promise<void>;
@@ -129,6 +148,10 @@ export interface EditorController {
   selectSegment(id: string): void;
   /** v0.3.2 · 项8：收起详情 sheet（仅清除 selectedSegmentId；不改播放状态与速率）。 */
   deselectSegment(): void;
+  /** v0.3.2 · 项9：单段试听（幂等重建：同段再点回段首、速率刷新段值；与队列互斥） */
+  startAudition(id: string): void;
+  /** v0.3.2 · 项9：停止试听（速率归 1、模式回 idle；不 seek、不改选中态） */
+  exitAudition(): void;
   setRate(id: string, rate: number): void;
   rename(id: string, label: string): void;
   /** v0.3.1 起返回是否提交成功（非法 / 越界 / 重叠 → false，供 UI 恢复原值）。 */
@@ -213,6 +236,10 @@ export function createEditorController(opts: {
   let scheduler: SegmentScheduler | null = null;
   // v0.3.2 · 项7：播放模式（G-1）——与 scheduler 同生命周期维护，驱动 togglePlay 模式感知
   let playMode: PlayMode = 'idle';
+  // v0.3.2 · 项9：试听调度器与单段 plan（audit 态运行时，不进配置/密钥/播放快照）。
+  // plan 引用被 scheduler 持有，矩阵 #6 热更新即就地改 items[0].rate（current()/resync 读 item.rate）
+  let auditScheduler: SegmentScheduler | null = null;
+  let auditPlan: PlayPlan | null = null;
   let objectUrlRevoke: (() => void) | null = null;
   let pendingReplaceFile: File | null = null;
   let lastSnapshotAt = 0;
@@ -313,6 +340,8 @@ export function createEditorController(opts: {
     if (!st.videoReady || st.queuePlaying) return st.queuePlaying;
     const cfg = activeConfig();
     if (!cfg) return false;
+    // v0.3.2 · 项9：与试听互斥——队列起播前先停 audit（playQueue / 驾驶舱续播路径统一收口）
+    if (auditScheduler) exitAudit('user');
     scheduler = new SegmentScheduler(engine, systemClock, compilePlan(cfg), {
       capabilities: { rVFC: caps?.rVFC ?? false },
       onFinish: () => {
@@ -494,7 +523,7 @@ export function createEditorController(opts: {
 
   function queueFrame(): QueueFrame {
     if (!scheduler) {
-      return { playing: false, paused: video.paused, queueIndex: -1, queueTotal: 0, segmentId: null, rate: 1, remainingMs: 0, loopsDone: 0 };
+      return { playing: false, paused: video.paused, queueIndex: -1, queueTotal: 0, segmentId: null, rate: 1, remainingMs: 0, loopsDone: 0, auditSegmentId: null, auditRate: 1 };
     }
     const s = scheduler.current();
     const cfg = activeConfig();
@@ -508,12 +537,20 @@ export function createEditorController(opts: {
       rate: s.rate,
       remainingMs: s.remainingMs,
       loopsDone: s.loopsDone,
+      auditSegmentId: null,
+      auditRate: 1,
     };
   }
 
   function emitFrame(): void {
     const t = engine.getTime();
     const q = queueFrame();
+    // v0.3.2 · 项9：audit 态随帧下发（BA-F-4：queueFrame 恒读队列调度器，
+    // 试听期 scheduler===null → 队列字段为空态，徽标不误读；audit 数据在此单独填充）
+    if (auditScheduler && auditPlan) {
+      q.auditSegmentId = auditPlan.items[0].segmentId;
+      q.auditRate = auditPlan.items[0].rate;
+    }
     // 驾驶舱线控卡片元数据：段切换时更新（锁屏/耳机控件上显示当前段名）
     if (mediaSession && q.segmentId !== lastMetaSegmentId) {
       lastMetaSegmentId = q.segmentId;
@@ -560,7 +597,12 @@ export function createEditorController(opts: {
   }
   function onVisibility(): void {
     if (document.visibilityState === 'hidden') onPageHide();
-    else if (scheduler && store.get().queuePlaying) scheduler.resync();
+    else {
+      if (scheduler && store.get().queuePlaying) scheduler.resync();
+      // v0.3.2 · 项9 · 矩阵 #14：试听回前台校准续播（BA-F-13：越界时 locateItem→null
+      // → advancePastEnd → onFinish → exitAudit('natural')，行为安全）
+      if (auditScheduler && playMode === 'audit') auditScheduler.resync();
+    }
   }
   document.addEventListener('visibilitychange', onVisibility);
   window.addEventListener('pagehide', onPageHide);
@@ -577,6 +619,67 @@ export function createEditorController(opts: {
     persistence.clearPlayback();
     mediaSession?.setPlaybackState('none');
     syncWakeLock();
+  }
+
+  // ---------- v0.3.2 · 项9：单段试听（audit 状态机 idle ⇄ audit + 态内暂停自循环） ----------
+
+  /** 试听退出来源：user = 用户动作（矩阵 #2/#3/#5/#7/#8/#11/#12/#13）；natural = 播完（#10，
+   *  含 BA-F-13 越界回前台经 advancePastEnd→onFinish 的不可区分路径）；restart = 幂等重建（#4）。 */
+  type AuditExitReason = 'user' | 'natural' | 'restart';
+
+  /** 停止试听：调度器幂等停 + 速率归 1 + 模式回 idle。不 seek、不改选中态、不写播放快照（#15）。 */
+  function exitAudit(reason: AuditExitReason): void {
+    if (auditScheduler) {
+      auditScheduler.stop(); // 幂等可重入（onFinish 后再 stop 安全，B评A 核实）
+      auditScheduler = null;
+    }
+    auditPlan = null;
+    engine.setRate(1);
+    playMode = 'idle';
+    if (store.get().auditSegmentId !== null) store.update({ auditSegmentId: null });
+    // BA-F-13：natural 结束补轻提示（越界回前台与自然播完共用同一 onFinish 出口，
+    // 用户感知「试听为何停了」；闪变方案弃用，轻提示可发现、可测）
+    if (reason === 'natural') notify('info', '试听结束。');
+    emitFrame();
+  }
+
+  /** 起播试听：单段 plan @段值，与队列互斥；幂等重建（同段回段首、速率刷新，矩阵 #4）。 */
+  function startAudition(id: string): void {
+    const st = store.get();
+    const cfg = activeConfig();
+    const seg = cfg?.segments.find((s) => s.id === id);
+    if (!cfg || !seg || !st.videoReady) return;
+    // 互斥：任一起播前先停对方（audit plan 不与队列调度器并存）
+    if (scheduler) stopQueueInternal();
+    if (auditScheduler) exitAudit('restart');
+    const plan: PlayPlan = {
+      items: [{
+        segmentId: seg.id,
+        label: seg.label,
+        start: seg.start,
+        end: seg.end,
+        rate: seg.rate,
+        sequenceIndex: -1,
+      }],
+      // loop off：单段播完即 onFinish（矩阵 #10 自然结束；segment 模式会无限循环）
+      loop: { mode: 'off', count: 0 },
+    };
+    auditPlan = plan;
+    auditScheduler = new SegmentScheduler(engine, systemClock, plan, {
+      capabilities: { rVFC: caps?.rVFC ?? false },
+      onFinish: () => {
+        // 矩阵 #10：到达段 end → 试听结束（调度器已 pause；此处补归 1x / idle / 徽标刷新）
+        exitAudit('natural');
+      },
+    });
+    if (!auditScheduler.start()) {
+      auditScheduler = null;
+      auditPlan = null;
+      return;
+    }
+    playMode = 'audit';
+    store.update({ auditSegmentId: id });
+    emitFrame();
   }
 
   // ---------- 视频装载 ----------
@@ -667,6 +770,8 @@ export function createEditorController(opts: {
   function stopIfPlayingBeforeEdit(): void {
     // 配置变更会使调度器持有的 plan 过期：编辑即停队列播放
     if (scheduler) stopQueueInternal();
+    // v0.3.2 · 项9 · 矩阵 #8：编辑即停纪律扩展覆盖试听（改起止/删除/勾选/队列编辑等）
+    if (auditScheduler) exitAudit('user');
   }
 
   // ---------- 配置导入（M3：URL 密钥与 .json 文件共用生效入口） ----------
@@ -683,6 +788,9 @@ export function createEditorController(opts: {
 
   /** 导入配置生效：F7 AC3 草稿纪律（本地有配置先挂草稿，应用前不写本地存储）。 */
   function applyImportedConfig(cfg: PlayerConfig): void {
+    // v0.3.2 · 项9 · 矩阵 #13：导入 = activeConfig 切源（含草稿挂起）→ 停止试听
+    // （audit plan 基于旧 activeConfig 构建，必须终止）
+    if (auditScheduler) exitAudit('user');
     const st = store.get();
     if (st.config && canonicalize(st.config) === canonicalize(cfg)) {
       notify('info', '这份配置与当前内容一致，无需导入。');
@@ -724,6 +832,8 @@ export function createEditorController(opts: {
       if (!accept || !file) return;
       // 确认后清空当前配置（F1 AC3），以新视频重建
       stopQueueInternal();
+      // v0.3.2 · 项9 · 矩阵 #5：一切终止——试听也停（配置清空重建，audit plan 必然作废）
+      if (auditScheduler) exitAudit('user');
       objectUrlRevoke?.();
       objectUrlRevoke = null;
       store.update({
@@ -747,20 +857,23 @@ export function createEditorController(opts: {
 
     togglePlay(): void {
       if (!store.get().videoReady) return;
-      // v0.3.2 · 项7：模式感知——队列中暂停/续播保段值（调度器维持 rate）；
-      // 自由预览起播前显式归 1（改速不泄漏进预览，F7′）
-      if (playMode === 'queue' && scheduler) {
-        if (video.paused) void engine.play();
-        else engine.pause();
-        emitFrame();
-        return;
-      }
-      if (video.paused) {
-        engine.setRate(1);
-        playMode = 'preview';
-        void engine.play();
-      } else {
-        engine.pause();
+      // v0.3.2 · 项7+项9：模式感知（resolvePlayAction 纯函数矩阵，见 play-mode.test）——
+      // 队列/试听中暂停续播保段值（矩阵 #1）；自由预览起播前显式归 1（改速不泄漏进预览，F7′）
+      switch (resolvePlayAction(playMode, video.paused)) {
+        case 'resume':
+          void engine.play();
+          break;
+        case 'pause':
+          engine.pause();
+          break;
+        case 'preview-play':
+          engine.setRate(1);
+          playMode = 'preview';
+          void engine.play();
+          break;
+        default:
+          engine.pause();
+          break;
       }
       emitFrame();
     },
@@ -769,6 +882,8 @@ export function createEditorController(opts: {
       if (!store.get().videoReady) return;
       // v0.3.2 · 项7：队列持有播放权时先停队列（切断「拖进度条 → 队列跳段带速」串扰），转自由预览
       if (scheduler) stopQueueInternal();
+      // v0.3.2 · 项9 · 矩阵 #2：定位动作 = 退出试听（C4 三态推广）→ 自由预览 @1x，seek 到目标位
+      if (auditScheduler) exitAudit('user');
       engine.seek(seconds);
       emitFrame();
     },
@@ -778,6 +893,8 @@ export function createEditorController(opts: {
       if (!st.videoReady || !Number.isFinite(deltaSec)) return;
       // v0.3.2 · 项7：同 seekPreview——队列持有播放权时先退出（scheduler 在即停）
       if (scheduler) stopQueueInternal();
+      // v0.3.2 · 项9 · 矩阵 #2：步进同为定位动作 → 退出试听
+      if (auditScheduler) exitAudit('user');
       const duration = st.videoDuration ?? activeConfig()?.video.duration ?? 0;
       const target = Math.min(duration, Math.max(0, engine.getTime() + deltaSec));
       engine.seek(target);
@@ -789,6 +906,8 @@ export function createEditorController(opts: {
       if (!st.videoReady) return;
       // 打点期间停队列播放，避免调度器持有过期 plan
       stopQueueInternal();
+      // v0.3.2 · 项9：打点 = 分割编辑 → 编辑即停试听（矩阵 #8）
+      if (auditScheduler) exitAudit('user');
       engine.pause();
       commitEditTracked('none', '', splitSegmentAt(mustConfig(), engine.getTime()), null);
     },
@@ -801,6 +920,9 @@ export function createEditorController(opts: {
       // v0.3.2 · 项7：有界播放中点选 → 先退出队列（调度器持有的 plan 随即作废），
       // 再按 F2-AC2 以段首 @1x 自由预览起播（不携带段值速率）
       if (scheduler) stopQueueInternal();
+      // v0.3.2 · 项9 · 矩阵 #3：试听中点选另一段 → 退出 → 同 F2-AC2 语义
+      // （跳新段起点、preview @1x 起播；连续对比经显式试听按钮）
+      if (auditScheduler) exitAudit('user');
       store.update({ selectedSegmentId: id });
       if (store.get().videoReady) {
         engine.setRate(1);
@@ -818,7 +940,31 @@ export function createEditorController(opts: {
       store.update({ selectedSegmentId: null });
     },
 
+    startAudition(id): void {
+      startAudition(id);
+    },
+
+    exitAudition(): void {
+      // 矩阵 #4「重启」语义由 startAudition 幂等重建承接；主入口试听中呈现为停止按钮
+      if (auditScheduler) exitAudit('user');
+    },
+
     setRate(id, rate) {
+      // v0.3.2 · 项9 · 矩阵 #6：调速作用于试听中的段 → 就地生效不打断——
+      // 不设会话级独立速率（D-1 细则否决）：段字段正常提交（草稿态分流不受影响），
+      // plan.items[0].rate 就地更新 + engine.setRate（scheduler current()/resync 读 item.rate）。
+      // 边界：草稿挂起（pendingKeyConfig）时调速只写草稿、试听不跟随（audit plan 基于起播时
+      // 的 activeConfig 构建；导入即停试听，矩阵 #13 覆盖主路径）
+      if (store.get().auditSegmentId === id) {
+        commitEditTracked('none', '', setSegmentRate(mustConfig(), id, rate), null);
+        if (auditScheduler && auditPlan && store.get().pendingKeyConfig === null) {
+          auditPlan.items[0].rate = rate;
+          engine.setRate(rate);
+        }
+        emitFrame();
+        return;
+      }
+      // 矩阵 #7：作用于其他段 → 编辑即停常规纪律
       stopIfPlayingBeforeEdit();
       commitEditTracked('none', '', setSegmentRate(mustConfig(), id, rate), null);
     },
@@ -942,6 +1088,8 @@ export function createEditorController(opts: {
     },
 
     stopQueue(): void {
+      // v0.3.2 · 项9 · 矩阵 #12：■ 停止按钮对队列与试听都生效（disabled 条件 queuePlaying ‖ audit）
+      if (auditScheduler) exitAudit('user');
       stopQueueInternal();
       engine.pause();
       emitFrame();
@@ -957,6 +1105,8 @@ export function createEditorController(opts: {
         notify('warn', '播放队列为空：请先勾选至少一段。');
         return;
       }
+      // v0.3.2 · 项9 · 矩阵 #11：进入驾驶舱 → 停止试听 → 队列从头开播
+      if (auditScheduler) exitAudit('user');
       // 未在播 → 从队列头开播；编辑器里已在播 → 直接切入不打断
       if (!st.queuePlaying && !startQueue()) return;
       store.update({ mode: 'cockpit' });

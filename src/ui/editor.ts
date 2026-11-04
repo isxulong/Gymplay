@@ -429,9 +429,13 @@ export function createEditorView(root: HTMLElement): EditorView {
     // v0.3.1 · R1 AC6：当前时刻恒显一位小数（m:ss.s），时长沿用既有规则
     timeLabel.textContent = `${formatTimeTenth(timeSec)} / ${formatTime(duration)}`;
     playToggle.textContent = video.paused ? '▶ 播放' : '⏸ 暂停';
-    // v0.3.2 · 项7：模式徽标——恒读队列调度器（scheduler 在即队列态，rate 恒段值）；
-    // 暂停期间无帧回调，但徽标文本含速率不随暂停变化，各退出路径的 emitFrame 已覆盖刷新
-    if (q.queueIndex >= 0 && q.queueTotal > 0) {
+    // v0.3.2 · 项7+项9：模式徽标三态——audit 优先（「试听 · 段名 · 速率」，橙色）；
+    // 队列态恒读队列调度器（q 恒为队列帧，BA-F-4：试听期 queueIndex=-1 不误读）
+    if (q.auditSegmentId) {
+      const seg = cfg?.segments.find((s) => s.id === q.auditSegmentId);
+      playModeBadge.textContent = `试听 · ${seg?.label || '未命名段'} · ${q.auditRate}x`;
+      playModeBadge.className = 'fvp-play-mode-badge fvp-play-mode-badge--audit';
+    } else if (q.queueIndex >= 0 && q.queueTotal > 0) {
       playModeBadge.textContent = `队列 · 第 ${q.queueIndex + 1}/${q.queueTotal} 项 · ${q.rate}x`;
       playModeBadge.className = 'fvp-play-mode-badge fvp-play-mode-badge--queue';
     } else {
@@ -506,7 +510,7 @@ export function createEditorView(root: HTMLElement): EditorView {
       });
       renderSegmentList(state, cfg, controller);
       renderSegmentDetail(state, cfg, controller);
-      renderQueue(queueContainer, { config: cfg, videoReady: state.videoReady, queuePlaying: state.queuePlaying }, {
+      renderQueue(queueContainer, { config: cfg, videoReady: state.videoReady, queuePlaying: state.queuePlaying, auditActive: state.auditSegmentId !== null }, {
         onToggle: (id, inQueue) => controller.toggleQueue(id, inQueue),
         onMove: (from, to) => controller.moveEntry(from, to),
         onDuplicate: (i) => controller.duplicateEntry(i),
@@ -640,7 +644,23 @@ export function createEditorView(root: HTMLElement): EditorView {
         h('span', { class: 'segment__meta' }, `${formatClock(seg.start, segDuration)}–${formatClock(seg.end, segDuration)} · ${seg.rate}x${seg.inQueue ? '' : ' · 未勾选'}`),
       );
       on(btn, 'click', () => controller.selectSegment(seg.id));
-      return btn;
+      // v0.3.2 · 项9：段列表项「试听」快捷入口（BA-F-11：连续对比两段一步可达；
+      // 点击一律 startAudition——同段即幂等重启（矩阵 #4），异段即切换目标）
+      const auditionBtn = h(
+        'button',
+        {
+          class: `segment__audition${state.auditSegmentId === seg.id ? ' segment__audition--active' : ''}`,
+          'data-testid': `audition-seg-${seg.id}`,
+          ...(state.videoReady ? {} : { disabled: '' }),
+        },
+        state.auditSegmentId === seg.id ? '■ 试听中' : '▶ 试听',
+      );
+      on(auditionBtn, 'click', (ev) => {
+        ev.stopPropagation();
+        controller.startAudition(seg.id);
+      });
+      // 外层行容器：避免 button 嵌套 button（HTML 不允许），主条目与快捷入口并排
+      return h('div', { class: 'segment-row' }, btn, auditionBtn);
     });
     // v0.3.2 · 项8：原详情区空态引导文案迁移至段列表底部 muted hint（不占 testid，
     // 方案项 4/8 迁移表首行）；仅未选中时出现，与旧空态语义一致
@@ -753,6 +773,21 @@ export function createEditorView(root: HTMLElement): EditorView {
     const deleteBtn = h('button', { class: 'fvp-btn fvp-btn--danger', 'data-testid': 'detail-delete' }, '删除此段');
     on(deleteBtn, 'click', () => controller.removeSegment(selected.id));
 
+    // v0.3.2 · 项9 · C4 裁决 A：sheet 内「试听本段」主入口（试听中变「■ 停止试听」）
+    const auditingThis = state.auditSegmentId === selected.id;
+    const auditionBtn = h(
+      'button',
+      {
+        class: `fvp-btn fvp-btn--primary${auditingThis ? ' fvp-btn--audit-active' : ''}`,
+        'data-testid': auditingThis ? 'audition-stop' : 'audition-start',
+      },
+      auditingThis ? '■ 停止试听' : '▶ 试听本段',
+    );
+    on(auditionBtn, 'click', () => {
+      if (state.auditSegmentId === selected.id) controller.exitAudition();
+      else controller.startAudition(selected.id);
+    });
+
     mount(
       detailBody,
       h('h3', {}, `编辑：${selected.label || '未命名段'}`),
@@ -763,6 +798,7 @@ export function createEditorView(root: HTMLElement): EditorView {
         h('label', { class: 'fvp-field' }, '结束', endInput)),
       boundsError,
       h('div', { class: 'fvp-field' }, '速度档位（队列播放与试听本段生效；自由预览恒 1x）', rateRow, skipZone),
+      auditionBtn,
       deleteBtn,
     );
   }

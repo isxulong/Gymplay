@@ -34,20 +34,20 @@ test('路径1：导入 → 打 3 段 → 设 3 档速 → 生成密钥 → 队�
   await importFixture(page);
 
   // 初始：单个全片段
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(1);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(1);
 
   // 打点 1：t=2 → [0,2] [2,10]
   await seekVideo(page, 2);
   await page.getByTestId('mark-button').click();
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(2);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(2);
 
   // 打点 2：t=5 → [0,2] [2,5] [5,10]
   await seekVideo(page, 5);
   await page.getByTestId('mark-button').click();
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(3);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(3);
 
   // 设 3 档速：段1=1x（默认）、段2=2x、段3=4x
-  const segButtons = page.getByTestId('segment-list').getByRole('button');
+  const segButtons = page.getByTestId('segment-list').locator('.segment');
   await segButtons.nth(1).click(); // 选中段 2（同时跳到段起点播放，F2 AC2）
   await page.getByTestId('rate-2').click();
   await expect(segButtons.nth(1)).toContainText('2x');

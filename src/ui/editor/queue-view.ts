@@ -29,6 +29,8 @@ export interface QueueModel {
   config: PlayerConfig;
   videoReady: boolean;
   queuePlaying: boolean;
+  /** v0.3.2 · 项9：单段试听中（■ 停止按钮对队列与试听都生效，矩阵 #12） */
+  auditActive: boolean;
 }
 
 function formatTime(sec: number): string {
@@ -99,7 +101,8 @@ export function renderQueue(container: HTMLElement, model: QueueModel, cb: Queue
   on(playBtn, 'click', () => cb.onPlayQueue());
   const stopBtn = h(
     'button',
-    { class: 'fvp-btn', 'data-testid': 'stop-queue', ...(queuePlaying ? {} : { disabled: '' }) },
+    // v0.3.2 · 项9 · 矩阵 #12：disabled 条件 = queuePlaying ‖ audit
+    { class: 'fvp-btn', 'data-testid': 'stop-queue', ...(queuePlaying || model.auditActive ? {} : { disabled: '' }) },
     '■ 停止',
   );
   on(stopBtn, 'click', () => cb.onStopQueue());

@@ -33,8 +33,8 @@ test('单段循环 100 圈无泄漏（真实 <video> + VP8/Opus fixture）', asy
     if (v) v.currentTime = 0.5;
   });
   await page.getByTestId('mark-button').click();
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(2);
-  await page.getByTestId('segment-list').getByRole('button').nth(0).click();
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(2);
+  await page.getByTestId('segment-list').locator('.segment').nth(0).click();
   await page.getByTestId('rate-4').click();
   await page.getByTestId('loop-segment').click();
 

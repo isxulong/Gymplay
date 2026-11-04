@@ -18,7 +18,7 @@ async function importAndMark(page: import('@playwright/test').Page): Promise<voi
     if (v) v.currentTime = 4;
   });
   await page.getByTestId('mark-button').click();
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(2);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(2);
 }
 
 /** 防抖 300ms + 余量，等自动保存落盘 */
@@ -30,7 +30,7 @@ test('F7 AC1：刷新页面配置无损恢复', async ({ page }) => {
   await importAndMark(page);
 
   // 段1 命名 + 1.5x；段2 取消勾选
-  const segs = page.getByTestId('segment-list').getByRole('button');
+  const segs = page.getByTestId('segment-list').locator('.segment');
   await segs.nth(0).click();
   await page.getByTestId('detail-label').fill('冲刺组');
   await page.getByTestId('detail-label').press('Tab');
@@ -43,7 +43,7 @@ test('F7 AC1：刷新页面配置无损恢复', async ({ page }) => {
   // 配置恢复：段数 / 名称 / 速度 / 勾选态；视频需重新选择（File 不可持久化）
   await expect(page.getByTestId('needs-video')).toBeVisible();
   await expect(page.getByTestId('needs-video-text')).toContainText('fixture-vp8-opus-10s.webm');
-  const segsAfter = page.getByTestId('segment-list').getByRole('button');
+  const segsAfter = page.getByTestId('segment-list').locator('.segment');
   await expect(segsAfter).toHaveCount(2);
   await expect(segsAfter.nth(0)).toContainText('冲刺组');
   await expect(segsAfter.nth(0)).toContainText('1.5x');
@@ -53,7 +53,7 @@ test('F7 AC1：刷新页面配置无损恢复', async ({ page }) => {
   await page.getByTestId('file-input').setInputFiles(FIXTURE);
   await expect(page.getByTestId('time-label')).toContainText('0:10');
   await expect(page.getByTestId('needs-video')).toBeHidden();
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(2);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(2);
 });
 
 test('F7 AC2：存储清空后回初始态、无报错', async ({ page }) => {
@@ -99,13 +99,13 @@ test('F7 AC3：本地有配置时打开分享链接 → 草稿态，应用/保�
   // 冲突 UI：草稿态提示 + 两个选择
   await expect(page.getByTestId('conflict-banner')).toBeVisible();
   // 草稿内容可预览（3 段 = 对方配置），但本地存储未被改写
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(3);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(3);
   expect(await page.evaluate(() => localStorage.getItem('fvp:config'))).toBe(localBefore);
 
   // 路径一：保留我的 → 本地配置原样恢复，hash 清除
   await page.getByTestId('conflict-discard').click();
   await expect(page.getByTestId('conflict-banner')).toBeHidden();
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(2);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(2);
   expect(await page.evaluate(() => localStorage.getItem('fvp:config'))).toBe(localBefore);
   expect(await page.evaluate(() => window.location.hash)).toBe('');
 
@@ -114,7 +114,7 @@ test('F7 AC3：本地有配置时打开分享链接 → 草稿态，应用/保�
   await expect(page.getByTestId('conflict-banner')).toBeVisible();
   await page.getByTestId('conflict-apply').click();
   await expect(page.getByTestId('conflict-banner')).toBeHidden();
-  await expect(page.getByTestId('segment-list').getByRole('button')).toHaveCount(3);
+  await expect(page.getByTestId('segment-list').locator('.segment')).toHaveCount(3);
 
   // 应用后本地存储已更新为对方配置（规范化 JSON 对比）
   const stored = await page.evaluate(() => localStorage.getItem('fvp:config'));
