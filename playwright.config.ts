@@ -32,6 +32,15 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   reporter: [['list']],
+  // v0.3.2 · 项8（C2 裁决先决条件①）：mobile project 375×667 双跑核心用例。
+  // 桌面档维持 Playwright 默认 1280×720 零配置（全量）；mobile 档仅跑标题带 @m375
+  // 标记的核心用例（sheet 开合 / 详情编辑 / 回收站 / 通知堆叠 / 队列调速 / 试听徽标，
+  // 10-12 条次；既有用例不补 viewport、不双跑——D-2 采纳）。mobile project 独立成档，
+  // 双跑条次计入 Phase 3 门禁（实跑数字进验证记录）。
+  projects: [
+    { name: 'desktop' },
+    { name: 'mobile-375', use: { viewport: { width: 375, height: 667 } }, grep: /@m375/ },
+  ],
   use: {
     baseURL: 'http://127.0.0.1:5199',
     launchOptions: {

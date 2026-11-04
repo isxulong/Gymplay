@@ -55,16 +55,15 @@ async function readSavedConfig(page: import('@playwright/test').Page): Promise<s
   return page.evaluate(() => window.localStorage.getItem('fvp:config') ?? '');
 }
 
-test('项5 · 三处同步：queue-rate 改速 → 队列 label 与详情档位高亮同步', async ({ page }) => {
+test('项5 · 三处同步：queue-rate 改速 → 队列 label 与详情档位高亮同步 @m375', async ({ page }) => {
   await seedAndLoad(page, twoSegConfig());
-  // 选中段 1 打开详情（初始 1x 非 active on 2x）
+  // v0.3.2 · 项8 双跑适配：先调速后选中——移动端 sheet 为模态弹层（scrim 挡住
+  // 页面其余区域），队列 select 须在 sheet 打开前操作；三处同步语义不变
+  await page.getByTestId('queue-rate-0').selectOption('2');
+  await expect(page.getByTestId('queue-entry-0')).toContainText('2x');
+  // 选中段 1 打开详情（初始非 2x 的对照由 1x→2x 的档位高亮变化承担）
   await page.getByTestId('segment-item-aaa000').click();
   await expect(page.getByTestId('detail-label')).toBeVisible();
-  await expect(page.getByTestId('rate-2')).not.toHaveClass(/rate--active/);
-  // 队列 select 调速到 2x
-  await page.getByTestId('queue-rate-0').selectOption('2');
-  // 队列项 label 含 2x；详情 2x 档高亮
-  await expect(page.getByTestId('queue-entry-0')).toContainText('2x');
   await expect(page.getByTestId('rate-2')).toHaveClass(/rate--active/);
 });
 
@@ -77,7 +76,7 @@ test('项5 · 同段联动提示：重复段后 hint 常驻「同段 2 处一起
   await expect(page.getByTestId('queue-rate-hint-1')).toBeVisible();
 });
 
-test('项5 · 调速即停队列 + 配置字节一致（队列调速 ≡ 详情调速）', async ({ page }) => {
+test('项5 · 调速即停队列 + 配置字节一致（队列调速 ≡ 详情调速） @m375', async ({ page }) => {
   await seedAndLoad(page, twoSegConfig());
   // 队列播放中调速 → 退出队列回预览（调速即停，B评A 坚持与 A 共识）
   await page.getByTestId('play-queue').click();

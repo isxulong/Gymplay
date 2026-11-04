@@ -51,6 +51,15 @@ if (rootEl) {
   store.subscribe((state) => {
     if (state.mode !== currentMode) applyMode(state.mode);
   });
+
+  // v0.3.2 · 项8（Phase 3）：960px 桌面断点接线——detailSheet 双宿主移动。
+  // 复用上方 applyMode 的节点移动先例（同一节点实例在两个宿主间移动，绑定不重建）：
+  // ≥960 → aside.editor-aside（grid 第二列 380px，无 scrim）；<960 → 主文档流
+  //（queue 之后、share 之前）。断点值 960 为方案 D-2 设计值（与 720px 容器现状衔接）。
+  const desktopQuery = window.matchMedia('(min-width: 960px)');
+  const applyLayout = (): void => editorView.applyLayout(desktopQuery.matches);
+  applyLayout();
+  desktopQuery.addEventListener('change', applyLayout);
 }
 
 // PWA：注册 SW + 「刷新即更新」提示接线（定稿 §2.7，设计见 ADR-010）

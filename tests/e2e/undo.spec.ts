@@ -83,7 +83,7 @@ function computeKey(page: import('@playwright/test').Page, cfgStr: string): Prom
   }, cfgStr);
 }
 
-test('项2+10 · 删→undo→配置逐字一致 + 密钥字节相等', async ({ page }) => {
+test('项2+10 · 删→undo→配置逐字一致 + 密钥字节相等 @m375', async ({ page }) => {
   await seedAndLoad(page, twoSegConfig());
   // 初始落盘稳定后取基线
   await page.waitForTimeout(600);
@@ -111,7 +111,7 @@ test('项2+10 · 删→undo→配置逐字一致 + 密钥字节相等', async ({
   expect(keyAfter).toBe(keyBefore); // 密钥字节级相等
 });
 
-test('项2+10 · 连删 3 段→恢复中间步→截断条目只读', async ({ page }) => {
+test('项2+10 · 连删 3 段→恢复中间步→截断条目只读 @m375', async ({ page }) => {
   await seedAndLoad(page, fourSegConfig());
   // 依次删 D、C、B（栈：[D, C, B]，B 为栈顶）
   for (const id of ['ddd333', 'ccc222', 'bbb111']) {

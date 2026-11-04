@@ -59,6 +59,9 @@ const STEP_REPEAT_START_MS = 200;
 const STEP_REPEAT_MIN_MS = 60;
 const STEP_REPEAT_DECAY_MS = 20;
 
+/** v0.3.2 · 项8：详情 sheet 下滑关闭阈值（sheet 头部向下拖超过该位移松手即关）。 */
+const SHEET_DRAG_CLOSE_PX = 48;
+
 function activeConfigOf(state: AppState): PlayerConfig | null {
   return state.pendingKeyConfig ?? state.config;
 }
@@ -68,6 +71,8 @@ export interface EditorView {
   video: HTMLVideoElement;
   /** 骨架完成后绑定 controller（渲染 + 帧回调） */
   bind(store: Store<AppState>, controller: EditorController): void;
+  /** v0.3.2 · 项8：详情 sheet 双宿主移动（desktop=true 移入右栏 aside，否则回主文档流） */
+  applyLayout(desktop: boolean): void;
 }
 
 export function createEditorView(root: HTMLElement): EditorView {
@@ -174,7 +179,22 @@ export function createEditorView(root: HTMLElement): EditorView {
   // v0.3.2 · 项4/8 · Phase 1（D 第三形态纯重排）：段详情从 segmentsPane 移出，
   // 主文档流顺序 = player → 段列表 → 队列 → 详情 → share（零新容器、零新增视觉 CSS；
   // 零新容器 = 不引入会被 Phase 3 sheet 化推翻的临时视觉层，D-2 采纳）
-  const segmentDetail = h('div', { class: 'segments__detail', 'data-testid': 'segment-detail' });
+  // v0.3.2 · 项8 · Phase 3（sheet 终态）：segment-detail 退役——详情区唯一容器 testid =
+  // detail-sheet，关闭钮 sheet-close、遮罩 sheet-scrim（C2 先决条件② 单层统一）。
+  // 移动端（<960）底部弹层 + scrim；桌面端（≥960）由 main.ts applyLayout 把 detailSheet
+  // 节点移入 aside.editor-aside（grid 第二列 380px，无 scrim 常驻——复用 applyMode 双宿主先例）。
+  // 选中态 ⇔ 开合：selectedSegmentId !== null ⇔ open；关闭（下滑 / scrim / 按钮）→ deselectSegment。
+  const sheetCloseBtn = h('button', { class: 'fvp-btn detail-sheet__close', 'data-testid': 'sheet-close' }, '关闭');
+  const sheetGrip = h('div', { class: 'detail-sheet__grip', 'aria-hidden': 'true' });
+  const sheetHead = h('header', { class: 'detail-sheet__head' }, sheetGrip, h('h3', {}, '段落详情'), sheetCloseBtn);
+  const detailBody = h('div', { class: 'detail-sheet__body segments__detail' });
+  const detailSheet = h(
+    'section',
+    { class: 'detail-sheet', 'data-testid': 'detail-sheet', hidden: '' },
+    sheetHead,
+    detailBody,
+  );
+  const sheetScrim = h('div', { class: 'detail-scrim', 'data-testid': 'sheet-scrim', hidden: '' });
   const segmentsPane = h(
     'section',
     { class: 'segments-pane' },
@@ -207,7 +227,10 @@ export function createEditorView(root: HTMLElement): EditorView {
     h('p', { class: 'fvp-muted' }, COPY_SOURCE_LIMITS),
   );
 
-  const editorMain = h('main', { class: 'fvp-editor', 'data-testid': 'editor' }, playerPane, segmentsPane, queuePane, segmentDetail, sharePane);
+  // v0.3.2 · 项8：桌面右栏锚点（≥960 时 applyLayout 把 detailSheet 移入此处，
+  // grid 第二列 380px；<960 时空置不占版面——flex 列布局下空 aside 无视觉影响）
+  const editorAside = h('aside', { class: 'editor-aside' });
+  const editorMain = h('main', { class: 'fvp-editor', 'data-testid': 'editor' }, playerPane, segmentsPane, queuePane, detailSheet, sharePane, editorAside);
 
   // 空状态（F9 AC2：三步引导 + 文案 A；M3：附接收方「导入配置」入口——
   // 冷启动无本地配置时分享区不可见，拿到 .json 编排文件的接收方从这里进入）
@@ -258,6 +281,7 @@ export function createEditorView(root: HTMLElement): EditorView {
       emptyState,
       needsVideoPane,
       editorMain,
+      sheetScrim,
       recycleRoot,
     ),
     fileInput,
@@ -285,6 +309,36 @@ export function createEditorView(root: HTMLElement): EditorView {
     on(changeVideoBtn, 'click', () => fileInput.click());
     // v0.3.2 · 项2+10：回收站开合
     on(recycleBinBtn, 'click', () => controller.openRecycle());
+    // v0.3.2 · 项8：详情 sheet 关闭三通道（按钮 / scrim / 下滑手势）→ deselectSegment
+    on(sheetCloseBtn, 'click', () => controller.deselectSegment());
+    on(sheetScrim, 'click', () => controller.deselectSegment());
+    // 下滑关闭：sheet 头部（含 grip）按下向下拖 >48px 松手即关；挂头部不与正文
+    // 输入控件抢手势。触摸跟手位移为真机走查项（方案「真机走查清单」），此处只保证语义。
+    let sheetDragY: number | null = null;
+    on(sheetHead, 'pointerdown', (ev) => {
+      // 按钮区（关闭钮）不抢手势：指针捕获会把 click 重定向到头部，
+      // 按钮自身的 click 将不再触发——须放行
+      if (ev.target instanceof Element && ev.target.closest('button')) return;
+      const pe = ev as PointerEvent;
+      sheetDragY = pe.clientY;
+      // 指针捕获：向下拖越出头部（进入正文/页面）后 pointerup 仍回落到头部
+      //（鼠标无隐式捕获，触摸有；统一显式捕获，失败不致命）
+      try {
+        sheetHead.setPointerCapture(pe.pointerId);
+      } catch {
+        /* pointerId 已失效等场景忽略——手势不成立即可 */
+      }
+    });
+    on(sheetHead, 'pointerup', (ev) => {
+      const y0 = sheetDragY;
+      sheetDragY = null;
+      if (y0 !== null && (ev as PointerEvent).clientY - y0 > SHEET_DRAG_CLOSE_PX) {
+        controller.deselectSegment();
+      }
+    });
+    on(sheetHead, 'pointercancel', () => {
+      sheetDragY = null;
+    });
     recycleView = createRecycleView(controller);
     recycleRoot.append(recycleView.el);
     on(emptyImportBtn, 'click', () => configFileInput.click());
@@ -450,7 +504,8 @@ export function createEditorView(root: HTMLElement): EditorView {
         segments: cfg.segments,
         selectedId: state.selectedSegmentId,
       });
-      renderSegments(state, cfg, controller);
+      renderSegmentList(state, cfg, controller);
+      renderSegmentDetail(state, cfg, controller);
       renderQueue(queueContainer, { config: cfg, videoReady: state.videoReady, queuePlaying: state.queuePlaying }, {
         onToggle: (id, inQueue) => controller.toggleQueue(id, inQueue),
         onMove: (from, to) => controller.moveEntry(from, to),
@@ -464,7 +519,10 @@ export function createEditorView(root: HTMLElement): EditorView {
       });
     } else {
       mount(segmentList);
-      mount(segmentDetail);
+      // v0.3.2 · 项8：无配置 → 详情收起（sheet 与 scrim 一并隐藏）
+      detailSheet.hidden = true;
+      sheetScrim.hidden = true;
+      mount(detailBody);
       mount(queueContainer);
     }
 
@@ -565,12 +623,12 @@ export function createEditorView(root: HTMLElement): EditorView {
     mount(noticeStack, ...noticeNodes);
   }
 
-  // ---------- 段落条 + 选中段编辑 ----------
-  function renderSegments(state: AppState, cfg: PlayerConfig, controller: EditorController): void {
+  // ---------- 段落条 + 选中段编辑（v0.3.2 · 项8：renderSegments 拆分为列表 / 详情两个渲染单元） ----------
+  function renderSegmentList(state: AppState, cfg: PlayerConfig, controller: EditorController): void {
     const sorted = [...cfg.segments].sort((a, b) => a.start - b.start);
     // v0.3.1 · R3：段落条元信息同步 mm:ss.s 显示（满 1 小时 h:mm:ss.s）
     const segDuration = state.videoDuration ?? cfg.video.duration;
-    const items = sorted.map((seg, i) => {
+    const items: Node[] = sorted.map((seg, i) => {
       const name = seg.label || `段 ${i + 1}`;
       const btn = h(
         'button',
@@ -584,11 +642,22 @@ export function createEditorView(root: HTMLElement): EditorView {
       on(btn, 'click', () => controller.selectSegment(seg.id));
       return btn;
     });
+    // v0.3.2 · 项8：原详情区空态引导文案迁移至段列表底部 muted hint（不占 testid，
+    // 方案项 4/8 迁移表首行）；仅未选中时出现，与旧空态语义一致
+    if (state.selectedSegmentId === null) {
+      items.push(h('p', { class: 'fvp-muted segments__hint' }, '点选段落条上的段，设置名称、起止与速度。'));
+    }
     mount(segmentList, ...items);
+  }
 
+  function renderSegmentDetail(state: AppState, cfg: PlayerConfig, controller: EditorController): void {
     const selected = cfg.segments.find((s) => s.id === state.selectedSegmentId);
+    // v0.3.2 · 项8：选中态 ⇔ sheet 开合（selectedSegmentId !== null ⇔ open）；
+    // scrim 同步（桌面端 ≥960 由 CSS display:none 常隐，JS 不区分断点）
+    detailSheet.hidden = selected === undefined;
+    sheetScrim.hidden = selected === undefined;
     if (!selected) {
-      mount(segmentDetail, h('p', { class: 'fvp-muted' }, '点选段落条上的段，设置名称、起止与速度。'));
+      mount(detailBody);
       return;
     }
 
@@ -685,7 +754,7 @@ export function createEditorView(root: HTMLElement): EditorView {
     on(deleteBtn, 'click', () => controller.removeSegment(selected.id));
 
     mount(
-      segmentDetail,
+      detailBody,
       h('h3', {}, `编辑：${selected.label || '未命名段'}`),
       h('label', { class: 'fvp-field' }, '名称', labelInput),
       h('label', { class: 'fvp-muted', 'data-testid': 'pitch-note' }, '变速保调已默认开启（人声音调不随速度变化）。'),
@@ -748,5 +817,17 @@ export function createEditorView(root: HTMLElement): EditorView {
     mount(sharePanel);
   }
 
-  return { root, video, bind };
+  // v0.3.2 · 项8：详情 sheet 双宿主移动（移动端主文档流 ⇄ 桌面右栏 aside）。
+  // 节点移动复用 main.ts applyMode 的 video 双宿主先例——移动的是同一节点实例，
+  // 事件与渲染绑定不重建；接线（matchMedia 监听）在 main.ts。
+  function applyLayout(desktop: boolean): void {
+    if (desktop) {
+      editorAside.append(detailSheet);
+    } else {
+      // 移动端宿主位 = Phase 1 主文档流顺序（queue 之后、share 之前）
+      editorMain.insertBefore(detailSheet, sharePane);
+    }
+  }
+
+  return { root, video, bind, applyLayout };
 }

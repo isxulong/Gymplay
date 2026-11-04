@@ -87,7 +87,7 @@ test('v0.3.2 · 项1：冻结完全静止（通道③ webdriver 守卫）——i
   await expect(infos.filter({ hasText: '这份配置与当前内容一致' })).toHaveCount(4);
 });
 
-test('v0.3.2 · 项1：加速消失——?fvpNoticeTtl=500（通道①）覆盖冻结，info 到期自动消失', async ({ page }) => {
+test('v0.3.2 · 项1：加速消失——?fvpNoticeTtl=500（通道①）覆盖冻结，info 到期自动消失 @m375', async ({ page }) => {
   await seedConfig(page, JSON.stringify(SMALL));
   await page.goto('/?fvpNoticeTtl=500');
   await page.getByTestId('config-file-input').setInputFiles({
@@ -101,7 +101,7 @@ test('v0.3.2 · 项1：加速消失——?fvpNoticeTtl=500（通道①）覆盖�
   await expect(notice).toHaveCount(0);
 });
 
-test('v0.3.2 · 项1：并发挤位——info 上限 3 条，第 4 条到达时最旧被移除', async ({ page }) => {
+test('v0.3.2 · 项1：并发挤位——info 上限 3 条，第 4 条到达时最旧被移除 @m375', async ({ page }) => {
   await seedConfig(page, JSON.stringify(SMALL));
   // 通道① 给足长 TTL：本用例只验证挤位，不让到期行为混入
   await page.goto('/?fvpNoticeTtl=60000');

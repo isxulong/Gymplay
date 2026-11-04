@@ -390,6 +390,141 @@
   font-size: 14px;
 }
 
+/* ---------- v0.3.2 · 项8：详情 sheet 化（移动优先底部弹层） ---------- */
+
+/* 段列表底部空态引导（原详情区空态文案迁移，不占 testid） */
+.segments__hint {
+  margin: 4px 0 0;
+}
+
+/* 遮罩（移动端 <960 随 sheet 开合；桌面端由下方媒体查询常隐） */
+.detail-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.detail-scrim[hidden] {
+  display: none;
+}
+
+/* 底部弹层（<960）：translateY 位移与 safe-area 均为真机走查项 */
+.detail-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 45;
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+  max-height: 80vh;
+  overflow-y: auto;
+  background: #1a1e24;
+  border: 1px solid #3a4048;
+  border-bottom: none;
+  border-radius: 14px 14px 0 0;
+  padding: 10px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.45);
+}
+
+.detail-sheet[hidden] {
+  display: none;
+}
+
+.detail-sheet__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  touch-action: none; /* sheet 手势独立：头部承担下滑关闭，不透传给页面滚动 */
+}
+
+.detail-sheet__head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.detail-sheet__grip {
+  flex: none;
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: #3a4048;
+  cursor: grab;
+}
+
+.detail-sheet__close {
+  margin-left: auto;
+  min-height: 32px;
+}
+
+/* ---------- v0.3.2 · 项8：960px 桌面断点（D-2 设计值，与 720px 容器现状衔接） ---------- */
+
+/* 移动端（<960）aside 空置——detailSheet 在主文档流宿主，空 aside 不占 flex 间隙 */
+.editor-aside:empty {
+  display: none;
+}
+
+@media (min-width: 960px) {
+  /* 容器放宽：720 单列 → 1120 双列（主列 + 380 右栏 + 16 间隙） */
+  .fvp {
+    max-width: 1120px;
+  }
+
+  .fvp-editor {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 380px;
+    align-items: start;
+  }
+
+  /* 右栏锚点：第一行起第二列常驻（空置时为稳定空白列，不随开合回流） */
+  .editor-aside {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: start;
+    position: sticky;
+    top: 12px;
+  }
+
+  /* 桌面无 scrim 常驻（C2 裁决） */
+  .detail-scrim {
+    display: none !important;
+  }
+
+  /* 桌面 sheet 原位静态：无 translateY / 无最大高度 / 无投影 */
+  .detail-sheet {
+    position: static;
+    max-width: none;
+    max-height: none;
+    border-radius: 8px;
+    border-bottom: 1px solid #3a4048;
+    box-shadow: none;
+    padding: 14px 16px;
+  }
+
+  .detail-sheet__grip {
+    display: none;
+  }
+}
+
+/* 退化开关（方案项8 规则5，CSS 一处开关）：低端安卓 WebView translateY 掉帧时
+   给 .fvp 加 sheet-static 类——sheet 改 position:static 挂主文档流（= D 第三形态
+   终态）、scrim 隐藏；DOM 与渲染函数不动。 */
+.fvp--sheet-static .detail-sheet {
+  position: static;
+  max-width: none;
+  max-height: none;
+  border-radius: 8px;
+  border-bottom: 1px solid #3a4048;
+  box-shadow: none;
+}
+
+.fvp--sheet-static .detail-scrim {
+  display: none !important;
+}
+
 /* ---------- 速度档位 ---------- */
 
 .rates {

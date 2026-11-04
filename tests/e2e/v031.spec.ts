@@ -73,7 +73,7 @@ test.describe('R1 时间轴可拖动播放头', () => {
     const t = await currentTime(page);
     expect(Math.abs(t - 8)).toBeLessThanOrEqual(0.2);
     // 未发生段选中
-    await expect(page.getByTestId('segment-detail')).toContainText('点选段落条上的段');
+    await expect(page.getByTestId('detail-sheet')).toBeHidden(); // 项8 迁移：空态断言改 sheet 隐藏
     // 播放状态与拖动前一致（仍暂停）
     expect(await isPaused(page)).toBe(true);
     // 松手后气泡隐藏
@@ -108,7 +108,7 @@ test.describe('R1 时间轴可拖动播放头', () => {
     await expect(page.getByTestId('scrub-bubble')).toBeHidden();
   });
 
-  test('AC3：单击色块（位移<5px）保留 v0.3.0 语义——选中并跳段首播放', async ({ page }) => {
+  test('AC3：单击色块（位移<5px）保留 v0.3.0 语义——选中并跳段首播放 @m375', async ({ page }) => {
     await importFixture(page);
     await seekVideo(page, 2);
     await page.getByTestId('mark-button').click();
@@ -116,7 +116,7 @@ test.describe('R1 时间轴可拖动播放头', () => {
 
     await page.locator('.tl__seg[data-seg-id]').first().click();
     // 选中该段（详情出现）且跳段首自动播放（F2 AC2 不破）
-    await expect(page.getByTestId('segment-detail')).toContainText('编辑：');
+    await expect(page.getByTestId('detail-sheet')).toContainText('编辑：'); // 项8 迁移：机械替换选择器串
     await expect.poll(() => isPaused(page)).toBe(false);
     expect((await currentTime(page)) - 0).toBeLessThanOrEqual(0.5);
   });
@@ -128,7 +128,7 @@ test.describe('R1 时间轴可拖动播放头', () => {
     await page.mouse.click(box.x + box.width * 0.5, box.y + box.height - 4);
     await expect.poll(() => currentTime(page)).toBeGreaterThan(4.5);
     expect(await currentTime(page)).toBeLessThanOrEqual(5.5);
-    await expect(page.getByTestId('segment-detail')).toContainText('点选段落条上的段');
+    await expect(page.getByTestId('detail-sheet')).toBeHidden(); // 项8 迁移：空态断言改 sheet 隐藏
 
     // 向左拖出界 → 钳制 0
     const cy = box.y + box.height / 2;
@@ -218,7 +218,7 @@ test.describe('v0.3.1 补强（复核一 P2-1 / P2-2 / P3-1 / P3-3）', () => {
     await page.mouse.down();
     await page.mouse.up();
     expect(await currentTime(page)).toBeCloseTo(t, 1);
-    await expect(page.getByTestId('segment-detail')).toContainText('点选段落条上的段');
+    await expect(page.getByTestId('detail-sheet')).toBeHidden(); // 项8 迁移：空态断言改 sheet 隐藏
   });
 
   test('v1.1 §3.2：拖动落点距段边界 ±8px 内吸附对齐，窗口外不吸附', async ({ page }) => {
@@ -258,7 +258,7 @@ test.describe('v0.3.1 补强（复核一 P2-1 / P2-2 / P3-1 / P3-3）', () => {
     await page.mouse.down();
     await page.waitForTimeout(400);
     await page.mouse.up();
-    await expect(page.getByTestId('segment-detail')).toContainText('点选段落条上的段'); // 未触发选中
+    await expect(page.getByTestId('detail-sheet')).toBeHidden(); // 项8 迁移：空态断言改 sheet 隐藏 // 未触发选中
     expect(await currentTime(page)).toBeCloseTo(5, 1); // 未触发 seek
   });
 

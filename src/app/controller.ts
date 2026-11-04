@@ -127,6 +127,8 @@ export interface EditorController {
   nudgePreview(deltaSec: number): void;
   mark(): void;
   selectSegment(id: string): void;
+  /** v0.3.2 · 项8：收起详情 sheet（仅清除 selectedSegmentId；不改播放状态与速率）。 */
+  deselectSegment(): void;
   setRate(id: string, rate: number): void;
   rename(id: string, label: string): void;
   /** v0.3.1 起返回是否提交成功（非法 / 越界 / 重叠 → false，供 UI 恢复原值）。 */
@@ -807,6 +809,13 @@ export function createEditorController(opts: {
         void engine.play();
         emitFrame();
       }
+    },
+
+    deselectSegment(): void {
+      // v0.3.2 · 项8：仅收起详情 sheet——选中态 ⇔ 开合的唯一契约是 selectedSegmentId；
+      // 不 seek、不改速率（selectSegment 的跳段首 @1x 语义只发生在「选中」方向）
+      if (store.get().selectedSegmentId === null) return;
+      store.update({ selectedSegmentId: null });
     },
 
     setRate(id, rate) {
