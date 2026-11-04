@@ -161,13 +161,15 @@ export function createEditorView(root: HTMLElement): EditorView {
   );
 
   const segmentList = h('div', { class: 'segments__list', 'data-testid': 'segment-list' });
+  // v0.3.2 · 项4/8 · Phase 1（D 第三形态纯重排）：段详情从 segmentsPane 移出，
+  // 主文档流顺序 = player → 段列表 → 队列 → 详情 → share（零新容器、零新增视觉 CSS；
+  // 零新容器 = 不引入会被 Phase 3 sheet 化推翻的临时视觉层，D-2 采纳）
   const segmentDetail = h('div', { class: 'segments__detail', 'data-testid': 'segment-detail' });
   const segmentsPane = h(
     'section',
     { class: 'segments-pane' },
     h('h2', {}, '段落'),
     segmentList,
-    segmentDetail,
   );
 
   const queueContainer = h('div', { class: 'queue' });
@@ -195,7 +197,7 @@ export function createEditorView(root: HTMLElement): EditorView {
     h('p', { class: 'fvp-muted' }, COPY_SOURCE_LIMITS),
   );
 
-  const editorMain = h('main', { class: 'fvp-editor', 'data-testid': 'editor' }, playerPane, segmentsPane, queuePane, sharePane);
+  const editorMain = h('main', { class: 'fvp-editor', 'data-testid': 'editor' }, playerPane, segmentsPane, queuePane, segmentDetail, sharePane);
 
   // 空状态（F9 AC2：三步引导 + 文案 A；M3：附接收方「导入配置」入口——
   // 冷启动无本地配置时分享区不可见，拿到 .json 编排文件的接收方从这里进入）
