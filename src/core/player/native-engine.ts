@@ -130,6 +130,13 @@ export function createNativeEngine(video: PitchVideoElement, opts: NativeEngineO
       video.webkitPreservesPitch = true;
       video.mozPreservesPitch = true;
     },
+    setVolume(volume: number): void {
+      // R2：直通 video 元素，钳制到 [0,1]
+      video.volume = Math.min(1, Math.max(0, Number.isFinite(volume) ? volume : 1));
+    },
+    setMuted(muted: boolean): void {
+      video.muted = muted;
+    },
     getTime(): number {
       return video.currentTime;
     },

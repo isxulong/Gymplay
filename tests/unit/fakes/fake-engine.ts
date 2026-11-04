@@ -11,7 +11,9 @@ export type EngineOp =
   | { type: 'play' }
   | { type: 'pause' }
   | { type: 'seek'; seconds: number }
-  | { type: 'setRate'; rate: number };
+  | { type: 'setRate'; rate: number }
+  | { type: 'setVolume'; volume: number }
+  | { type: 'setMuted'; muted: boolean };
 
 export class FakeEngine implements PlayerEngine {
   readonly ops: EngineOp[] = [];
@@ -49,6 +51,14 @@ export class FakeEngine implements PlayerEngine {
 
   setRate(rate: number): void {
     this.ops.push({ type: 'setRate', rate });
+  }
+
+  setVolume(volume: number): void {
+    this.ops.push({ type: 'setVolume', volume });
+  }
+
+  setMuted(muted: boolean): void {
+    this.ops.push({ type: 'setMuted', muted });
   }
 
   getTime(): number {

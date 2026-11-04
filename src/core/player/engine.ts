@@ -29,6 +29,10 @@ export interface PlayerEngine {
   seek(seconds: number): void;
   /** 内部按平台能力钳制并处理静音策略；preservesPitch 默认开启（P4 结论）。 */
   setRate(rate: number): void;
+  /** v0.3.1 · R2：设置音量（0..1，超界钳制）。属运行时状态，不进分享密钥。 */
+  setVolume(volume: number): void;
+  /** v0.3.1 · R2：静音切换；取消静音后音量保持原值。 */
+  setMuted(muted: boolean): void;
   /** 当前媒体时间（秒）。供轮询调度与 resync 校准使用。 */
   getTime(): number;
   /** 三通道归一（timeupdate + rVFC + 50ms 轮询兜底）的时间回调。 */

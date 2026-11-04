@@ -27,6 +27,11 @@ import {
 import { buildHashWithKey, extractKeyFromHash, writeKeyToLocation } from '../core/config/hash';
 import type { Persistence } from '../core/config/persistence';
 import {
+  clampVolume,
+  createVolumePrefsStore,
+  type VolumePrefs,
+} from '../core/config/volume';
+import {
   clampConfigToDuration,
   createInitialConfig,
   deleteSegment,
@@ -94,11 +99,14 @@ export interface EditorController {
   confirmReplace(accept: boolean): Promise<void>;
   togglePlay(): void;
   seekPreview(seconds: number): void;
+  /** v0.3.1 · R1：播放头步进（±1s / ±0.1s 步进按钮），钳制在 [0, duration]。 */
+  nudgePreview(deltaSec: number): void;
   mark(): void;
   selectSegment(id: string): void;
   setRate(id: string, rate: number): void;
   rename(id: string, label: string): void;
-  setBounds(id: string, start: number, end: number): void;
+  /** v0.3.1 起返回是否提交成功（非法 / 越界 / 重叠 → false，供 UI 恢复原值）。 */
+  setBounds(id: string, start: number, end: number): boolean;
   removeSegment(id: string): void;
   toggleQueue(id: string, inQueue: boolean): void;
   moveEntry(from: number, to: number): void;
@@ -134,6 +142,12 @@ export interface EditorController {
   discardDraft(): void;
   notify(kind: NoticeKind, text: string): void;
   dismissNotice(id: number): void;
+  /** v0.3.1 · R2：设置音量（0..1，钳制），按设备记忆（localStorage，不进分享密钥）。 */
+  setVolume(volume: number): void;
+  /** v0.3.1 · R2：静音切换；取消静音后音量保持原值。 */
+  setMuted(muted: boolean): void;
+  /** v0.3.1 · R2：当前音量偏好（UI 初始化滑杆 / 图标）。 */
+  getVolumePrefs(): VolumePrefs;
   /** 播放头 / 队列状态帧回调（驱动播放头与状态行，不经 store） */
   onFrame(cb: (timeSec: number, queue: QueueFrame) => void): void;
   destroy(): void;
@@ -150,6 +164,13 @@ export function createEditorController(opts: {
     rVFC: caps?.rVFC ?? false,
     rateRange: caps?.rateRange,
   });
+
+  // v0.3.1 · R2 音量偏好：按设备记忆（localStorage 键 gymplay:volume），
+  // 不进分享密钥 / .json 导出；存储降级时静默回退会话内生效（R2 AC6）。
+  const volumeStore = createVolumePrefsStore();
+  let volumePrefs: VolumePrefs = volumeStore.load();
+  engine.setVolume(volumePrefs.volume);
+  engine.setMuted(volumePrefs.muted);
 
   let scheduler: SegmentScheduler | null = null;
   let objectUrlRevoke: (() => void) | null = null;
@@ -429,6 +450,9 @@ export function createEditorController(opts: {
       notify('error', COPY_LOAD_FAILED); // F9 AC1：解码失败 / 内存不足统一话术
       return;
     }
+    // R2 AC3：重新导入视频后恢复本机音量偏好（部分平台换源会重置音量）
+    engine.setVolume(volumePrefs.volume);
+    engine.setMuted(volumePrefs.muted);
     objectUrlRevoke?.();
     objectUrlRevoke = loaded.revoke;
 
@@ -554,6 +578,15 @@ export function createEditorController(opts: {
       emitFrame();
     },
 
+    nudgePreview(deltaSec: number): void {
+      const st = store.get();
+      if (!st.videoReady || !Number.isFinite(deltaSec)) return;
+      const duration = st.videoDuration ?? activeConfig()?.video.duration ?? 0;
+      const target = Math.min(duration, Math.max(0, engine.getTime() + deltaSec));
+      engine.seek(target);
+      emitFrame();
+    },
+
     mark(): void {
       const st = store.get();
       if (!st.videoReady) return;
@@ -588,7 +621,7 @@ export function createEditorController(opts: {
 
     setBounds(id, start, end) {
       stopIfPlayingBeforeEdit();
-      commitEdit(updateSegmentBounds(mustConfig(), id, start, end));
+      return commitEdit(updateSegmentBounds(mustConfig(), id, start, end));
     },
 
     removeSegment(id) {
@@ -806,6 +839,22 @@ export function createEditorController(opts: {
 
     dismissNotice(id: number): void {
       store.update({ notices: store.get().notices.filter((n) => n.id !== id) });
+    },
+
+    setVolume(volume: number): void {
+      volumePrefs = { ...volumePrefs, volume: clampVolume(volume) };
+      engine.setVolume(volumePrefs.volume);
+      volumeStore.save(volumePrefs);
+    },
+
+    setMuted(muted: boolean): void {
+      volumePrefs = { ...volumePrefs, muted };
+      engine.setMuted(muted);
+      volumeStore.save(volumePrefs);
+    },
+
+    getVolumePrefs(): VolumePrefs {
+      return { ...volumePrefs };
     },
 
     onFrame(cb) {

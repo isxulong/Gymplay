@@ -22,6 +22,7 @@ import type { Store } from '../app/store';
 import { h, mount, on } from './dom';
 import { createTimelineBar, type TimelineBar } from './editor/timeline-bar';
 import { renderQueue } from './editor/queue-view';
+import { formatClock, parseTimeInput } from './editor/time-input';
 
 /** 文案 A · 视频源限制（需求稿成稿，空状态页 + 导入区常驻） */
 const COPY_SOURCE_LIMITS =
@@ -40,6 +41,19 @@ function formatTime(sec: number): string {
   const sText = Number.isInteger(s) ? String(s) : s.toFixed(1);
   return `${m}:${sText.padStart(2, '0')}`;
 }
+
+/** v0.3.1 · R1 AC6：当前时刻恒显一位小数（m:ss.s），时长沿用 formatTime 既有规则。 */
+function formatTimeTenth(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec - m * 60;
+  return `${m}:${s.toFixed(1).padStart(4, '0')}`;
+}
+
+/** v0.3.1 · v1.1 §7.2：步进按钮长按连发参数（单击步进一档，长按 400ms 后连发，200ms 加速到 60ms）。 */
+const STEP_REPEAT_DELAY_MS = 400;
+const STEP_REPEAT_START_MS = 200;
+const STEP_REPEAT_MIN_MS = 60;
+const STEP_REPEAT_DECAY_MS = 20;
 
 function activeConfigOf(state: AppState): PlayerConfig | null {
   return state.pendingKeyConfig ?? state.config;
@@ -83,6 +97,27 @@ export function createEditorView(root: HTMLElement): EditorView {
   const timeLabel = h('span', { class: 'player__time', 'data-testid': 'time-label' }, '0:00 / 0:00');
   const markBtn = h('button', { class: 'fvp-btn fvp-btn--mark', 'data-testid': 'mark-button' }, '✚ 打点');
 
+  // v0.3.1 · R2 音量控件：滑杆（0-100）+ 静音切换；按设备记忆，不进分享密钥
+  const volumeMute = h(
+    'button',
+    { class: 'fvp-btn fvp-btn--icon', 'data-testid': 'volume-mute', 'aria-label': '静音切换' },
+    '🔊',
+  );
+  const volumeSlider = h('input', {
+    type: 'range', min: '0', max: '100', step: '1', value: '100',
+    class: 'player__volume', 'data-testid': 'volume-slider', 'aria-label': '音量',
+  }) as HTMLInputElement;
+
+  // v0.3.1 · v1.1 §7.2 步进按钮：±1s / ±0.1s，仅暂停时显示；单击步进一档，长按连发加速
+  const stepButtons = h(
+    'div',
+    { class: 'player__steps', 'data-testid': 'step-buttons', hidden: '' },
+    h('button', { class: 'fvp-btn fvp-btn--step', 'data-testid': 'step-minus-1s', 'data-delta': '-1' }, '−1s'),
+    h('button', { class: 'fvp-btn fvp-btn--step', 'data-testid': 'step-minus-0.1s', 'data-delta': '-0.1' }, '−0.1s'),
+    h('button', { class: 'fvp-btn fvp-btn--step', 'data-testid': 'step-plus-0.1s', 'data-delta': '0.1' }, '+0.1s'),
+    h('button', { class: 'fvp-btn fvp-btn--step', 'data-testid': 'step-plus-1s', 'data-delta': '1' }, '+1s'),
+  );
+
   const timeline: TimelineBar = createTimelineBar({
     onSeek: (t) => controllerRef?.seekPreview(t),
     onSelectSegment: (id) => controllerRef?.selectSegment(id),
@@ -92,7 +127,15 @@ export function createEditorView(root: HTMLElement): EditorView {
     'section',
     { class: 'player-pane' },
     video,
-    h('div', { class: 'player__transport' }, playToggle, timeLabel, markBtn),
+    h(
+      'div',
+      { class: 'player__transport' },
+      playToggle,
+      timeLabel,
+      markBtn,
+      h('div', { class: 'player__volume-group' }, volumeMute, volumeSlider),
+      stepButtons,
+    ),
     timeline.el,
   );
 
@@ -205,6 +248,55 @@ export function createEditorView(root: HTMLElement): EditorView {
     on(importOpenBtn, 'click', () => configFileInput.click());
     on(keyImportBtn, 'click', () => controller.importKeyText(keyInput.value));
 
+    // v0.3.1 · R2 音量控件：初始化为本机偏好；滑杆拖动实时生效并落盘（R2 AC1/AC3/AC5）
+    // R2 AC5 口径补强（复核一 P3-1）：图标呈现「实际可闻状态」——volume=0 等价静音态
+    const refreshVolumeIcon = (): void => {
+      const p = controller.getVolumePrefs();
+      volumeMute.textContent = p.muted || p.volume === 0 ? '🔇' : '🔊';
+    };
+    const prefs = controller.getVolumePrefs();
+    volumeSlider.value = String(Math.round(prefs.volume * 100));
+    refreshVolumeIcon();
+    on(volumeSlider, 'input', () => {
+      const v = Number(volumeSlider.value) / 100;
+      controller.setVolume(v);
+      refreshVolumeIcon();
+    });
+    on(volumeMute, 'click', () => {
+      const nowMuted = !controller.getVolumePrefs().muted;
+      controller.setMuted(nowMuted);
+      refreshVolumeIcon();
+    });
+
+    // v0.3.1 · v1.1 §7.2 步进按钮：pointerdown 立即步进一档，长按 400ms 后连发，
+    // 连发间隔从 200ms 逐次收紧到 60ms；pointerup/cancel/leave 停止（吞掉合成 click）。
+    for (const btn of Array.from(stepButtons.querySelectorAll<HTMLButtonElement>('button[data-delta]'))) {
+      const delta = Number(btn.dataset.delta);
+      let delayTimer: ReturnType<typeof setTimeout> | null = null;
+      let repeatTimer: ReturnType<typeof setTimeout> | null = null;
+      const clearTimers = (): void => {
+        if (delayTimer !== null) clearTimeout(delayTimer);
+        if (repeatTimer !== null) clearTimeout(repeatTimer);
+        delayTimer = null;
+        repeatTimer = null;
+      };
+      const scheduleRepeat = (interval: number): void => {
+        repeatTimer = setTimeout(() => {
+          controller.nudgePreview(delta);
+          scheduleRepeat(Math.max(STEP_REPEAT_MIN_MS, interval - STEP_REPEAT_DECAY_MS));
+        }, interval);
+      };
+      on(btn, 'pointerdown', () => {
+        controller.nudgePreview(delta);
+        clearTimers();
+        delayTimer = setTimeout(() => scheduleRepeat(STEP_REPEAT_START_MS), STEP_REPEAT_DELAY_MS);
+      });
+      on(btn, 'pointerup', clearTimers);
+      on(btn, 'pointercancel', clearTimers);
+      on(btn, 'pointerleave', clearTimers);
+      on(btn, 'click', (ev) => ev.preventDefault());
+    }
+
     store.subscribe((state) => render(state, store, controller));
     render(store.get(), store, controller);
 
@@ -216,8 +308,12 @@ export function createEditorView(root: HTMLElement): EditorView {
     const state = storeRef?.get();
     const cfg = state ? activeConfigOf(state) : null;
     const duration = state?.videoDuration ?? cfg?.video.duration ?? 0;
-    timeLabel.textContent = `${formatTime(timeSec)} / ${formatTime(duration)}`;
+    // v0.3.1 · R1 AC6：当前时刻恒显一位小数（m:ss.s），时长沿用既有规则
+    timeLabel.textContent = `${formatTimeTenth(timeSec)} / ${formatTime(duration)}`;
     playToggle.textContent = video.paused ? '▶ 播放' : '⏸ 暂停';
+    // v0.3.1 · v1.1 §5/§7.2：暂停时打点按钮带时刻、步进按钮显示；播放中隐藏步进
+    markBtn.textContent = video.paused ? `✚ 打点 ${formatClock(timeSec, duration)}` : '✚ 打点';
+    stepButtons.hidden = !video.paused || !state?.videoReady;
     timeline.updatePlayhead(timeSec);
     const statusEl = queueContainer.querySelector('[data-testid="queue-status"]');
     if (statusEl) {
@@ -356,6 +452,8 @@ export function createEditorView(root: HTMLElement): EditorView {
   // ---------- 段落条 + 选中段编辑 ----------
   function renderSegments(state: AppState, cfg: PlayerConfig, controller: EditorController): void {
     const sorted = [...cfg.segments].sort((a, b) => a.start - b.start);
+    // v0.3.1 · R3：段落条元信息同步 mm:ss.s 显示（满 1 小时 h:mm:ss.s）
+    const segDuration = state.videoDuration ?? cfg.video.duration;
     const items = sorted.map((seg, i) => {
       const name = seg.label || `段 ${i + 1}`;
       const btn = h(
@@ -365,7 +463,7 @@ export function createEditorView(root: HTMLElement): EditorView {
           'data-testid': `segment-item-${seg.id}`,
         },
         h('span', { class: 'segment__name' }, name),
-        h('span', { class: 'segment__meta' }, `${formatTime(seg.start)}–${formatTime(seg.end)} · ${seg.rate}x${seg.inQueue ? '' : ' · 未勾选'}`),
+        h('span', { class: 'segment__meta' }, `${formatClock(seg.start, segDuration)}–${formatClock(seg.end, segDuration)} · ${seg.rate}x${seg.inQueue ? '' : ' · 未勾选'}`),
       );
       on(btn, 'click', () => controller.selectSegment(seg.id));
       return btn;
@@ -388,18 +486,60 @@ export function createEditorView(root: HTMLElement): EditorView {
     }) as HTMLInputElement;
     on(labelInput, 'change', () => controller.rename(selected.id, labelInput.value));
 
-    // 起止
+    // 起止（v0.3.1 · R3：展示与输入为 mm:ss.s，视频满 1 小时用 h:mm:ss.s；内部存储保持秒）
+    const videoDuration = state.videoDuration ?? cfg.video.duration;
+    const startText = formatClock(selected.start, videoDuration);
+    const endText = formatClock(selected.end, videoDuration);
     const startInput = h('input', {
-      type: 'number', step: '0.1', min: '0', value: String(selected.start), 'data-testid': 'detail-start',
+      type: 'text', value: startText, placeholder: 'mm:ss.s，例如 12:34.5', 'data-testid': 'detail-start',
     }) as HTMLInputElement;
     const endInput = h('input', {
-      type: 'number', min: '0', step: '0.1', value: String(selected.end), 'data-testid': 'detail-end',
+      type: 'text', value: endText, placeholder: 'mm:ss.s，例如 12:34.5', 'data-testid': 'detail-end',
     }) as HTMLInputElement;
+    const boundsError = h('p', { class: 'fvp-field-error', 'data-testid': 'detail-bounds-error', hidden: '' });
+
+    const restoreBounds = (): void => {
+      startInput.value = startText;
+      endInput.value = endText;
+    };
+    const clearBoundsError = (): void => {
+      startInput.classList.remove('fvp-input--error');
+      endInput.classList.remove('fvp-input--error');
+      boundsError.hidden = true;
+      boundsError.textContent = '';
+    };
+    const showBoundsError = (badStart: boolean, badEnd: boolean, message: string): void => {
+      startInput.classList.toggle('fvp-input--error', badStart);
+      endInput.classList.toggle('fvp-input--error', badEnd);
+      boundsError.textContent = message;
+      boundsError.hidden = false;
+      // R3 AC5：非法输入恢复原值、不提交；复核一 P3-3b：只恢复非法字段，
+      // 另一字段的未提交有效编辑保留（setBounds 拒绝的组合非法路径仍整组恢复，见下）
+      if (badStart) startInput.value = startText;
+      if (badEnd) endInput.value = endText;
+    };
+
     const commitBounds = (): void => {
-      controller.setBounds(selected.id, Number(startInput.value), Number(endInput.value));
+      const start = parseTimeInput(startInput.value);
+      const end = parseTimeInput(endInput.value);
+      if (start === null || end === null) {
+        // R3 AC5：无法解析（abc / 12:99 / 空串）→ 标红提示 + 恢复原值 + 不提交
+        showBoundsError(start === null, end === null, '时间格式不正确，请用 mm:ss.s（如 12:34.5），满 1 小时用 h:mm:ss.s。');
+        return;
+      }
+      clearBoundsError();
+      // R3 AC6：越界 / start≥end / 段重叠 → setBounds 拒绝（通知走既有 warn 通道），UI 恢复原值
+      if (!controller.setBounds(selected.id, start, end)) {
+        startInput.classList.add('fvp-input--error');
+        endInput.classList.add('fvp-input--error');
+        restoreBounds();
+      }
+      // 提交成功：store 更新触发 render，输入框以规范格式重渲染
     };
     on(startInput, 'change', commitBounds);
     on(endInput, 'change', commitBounds);
+    on(startInput, 'input', clearBoundsError);
+    on(endInput, 'input', clearBoundsError);
 
     // 速度档位（P4：0.5~2 听感跟练区；3/4 跳过区·听感失真）
     const rateRow = h('div', { class: 'rates', 'data-testid': 'rate-picker' });
@@ -434,8 +574,9 @@ export function createEditorView(root: HTMLElement): EditorView {
       h('label', { class: 'fvp-field' }, '名称', labelInput),
       h('label', { class: 'fvp-muted', 'data-testid': 'pitch-note' }, '变速保调已默认开启（人声音调不随速度变化）。'),
       h('div', { class: 'fvp-row' },
-        h('label', { class: 'fvp-field' }, '开始（秒）', startInput),
-        h('label', { class: 'fvp-field' }, '结束（秒）', endInput)),
+        h('label', { class: 'fvp-field' }, '开始', startInput),
+        h('label', { class: 'fvp-field' }, '结束', endInput)),
+      boundsError,
       h('div', { class: 'fvp-field' }, '速度档位', rateRow, skipZone),
       deleteBtn,
     );

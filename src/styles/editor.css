@@ -530,3 +530,153 @@
   font-size: 13px;
   line-height: 1.6;
 }
+
+
+/* ---------- v0.3.1 · R1 时间轴拖动寻址（v1.1 垂直距离灵敏度模型） ---------- */
+
+.tl {
+  position: relative;
+}
+
+.tl__track {
+  /* 垂直滑动交给页面滚动，水平拖动由 JS 接管（v1.1 §6.2） */
+  touch-action: pan-y;
+  user-select: none;
+}
+
+.tl__track--scrubbing {
+  cursor: grabbing;
+}
+
+.tl__track--scrubbing .tl__playhead {
+  /* scrubbing 中播放头加粗换强调色：明确的「抓到了」反馈（v1.1 §3.1） */
+  width: 3px;
+  background: #4da3ff;
+}
+
+.tl__bubble {
+  position: absolute;
+  top: -34px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  background: rgba(16, 19, 26, 0.92);
+  border: 1px solid #3a4048;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.tl__bubble-time {
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+}
+
+.tl__gear {
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* 档位徽标：1x 中性 / 精调 1/4 黄 / 精调 1/8 橙（v1.1 §7.3 可发现性配色） */
+.tl__gear--1x {
+  background: #3a4048;
+  color: #d5dae1;
+}
+
+.tl__gear--q {
+  background: #f5c542;
+  color: #10131a;
+}
+
+.tl__gear--e {
+  background: #f08a24;
+  color: #10131a;
+}
+
+/* ---------- v0.3.1 · R2 音量控件 ---------- */
+
+.player__volume-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fvp-btn--icon {
+  min-width: 36px;
+  padding: 6px;
+}
+
+.player__volume {
+  width: 96px;
+  accent-color: #4da3ff;
+}
+
+/* ---------- v0.3.1 · v1.1 §7.2 步进按钮 ---------- */
+
+.player__steps {
+  display: flex;
+  gap: 8px;
+}
+
+.fvp-btn--step {
+  min-width: 44px;
+  min-height: 44px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- v0.3.1 · R3 起止输入错误态 ---------- */
+
+.fvp-input--error {
+  border-color: #e5534b !important;
+  outline: 1px solid #e5534b;
+}
+
+.fvp-field-error {
+  margin: 4px 0 0;
+  color: #e5534b;
+  font-size: 12px;
+}
+
+/* ---------- v0.3.1 补强 · v1.1 §3.1 播放头水滴手柄 + 44px 隐形热区 ---------- */
+
+/* 热区与视觉分离（v1.1 §3.1）：元素本体 = 44×44px 隐形命中区（HANDLE_HIT_PX），
+   水滴视觉由 ::before 承担；位于轨道内顶部，层级随播放头（z-index 3）高于色块 */
+.tl__playhead-grip {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 44px;
+  height: 44px;
+  pointer-events: auto; /* 播放头线本体仍 pointer-events:none，热区由手柄承担 */
+  cursor: grab;
+}
+
+/* 水滴视觉 ≈18×24px（方案建议 ≈20×24px），位于热区顶部居中、尖朝下指向刻度线 */
+.tl__playhead-grip::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  background: #fff;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+}
+
+.tl__track--scrubbing .tl__playhead-grip {
+  cursor: grabbing;
+}
+
+.tl__track--scrubbing .tl__playhead-grip::before {
+  /* 与加粗播放头同强调色：「抓到了」反馈（v1.1 §3.1） */
+  background: #4da3ff;
+}

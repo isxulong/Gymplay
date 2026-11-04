@@ -1,0 +1,1 @@
+{"v":1,"video":{"type":"local","filename":"long-video.mp4","duration":4000},"segments":[{"id":"aa0001","start":0,"end":3723.4,"rate":1,"label":"前半","inQueue":false},{"id":"aa0002","start":3723.4,"end":3900,"rate":1,"label":"长跑段","inQueue":true}],"sequence":["aa0001","aa0002"],"loop":{"mode":"off"}}
