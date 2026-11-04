@@ -659,7 +659,8 @@ export function createEditorController(opts: {
         start: seg.start,
         end: seg.end,
         rate: seg.rate,
-        sequenceIndex: -1,
+        // BA-F-12 / G-3：真实下标，禁用 -1 哨兵（与 plan.ts L22「sequence 原始下标」契约一致，防御性）
+        sequenceIndex: cfg.sequence.indexOf(seg.id),
       }],
       // loop off：单段播完即 onFinish（矩阵 #10 自然结束；segment 模式会无限循环）
       loop: { mode: 'off', count: 0 },

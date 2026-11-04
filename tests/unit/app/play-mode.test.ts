@@ -10,7 +10,7 @@
  * node 环境下以全局 stub 提供 controller 创建期触碰的 document / window / navigator。
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { FakeEngine } from '../fakes/fake-engine';
 import { createStore } from '../../../src/app/store';
 import { initialState, type AppState } from '../../../src/app/state';
@@ -35,6 +35,18 @@ g.window = {
 Object.defineProperty(g, 'navigator', { value: { webdriver: false }, configurable: true });
 
 // 动态 import：确保上述 stub 在模块求值前就位
+// BA-F-12 测试缝：包装真实 SegmentScheduler（行为零改动），仅捕获构造入参中的 PlayPlan
+const { capturedPlans } = vi.hoisted(() => ({ capturedPlans: [] as unknown[] }));
+vi.mock('../../../src/core/scheduler/scheduler', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('../../../src/core/scheduler/scheduler')>();
+  class CapturingSegmentScheduler extends mod.SegmentScheduler {
+    constructor(...args: ConstructorParameters<typeof mod.SegmentScheduler>) {
+      super(...args);
+      capturedPlans.push(args[2]);
+    }
+  }
+  return { ...mod, SegmentScheduler: CapturingSegmentScheduler };
+});
 const { createEditorController } = await import('../../../src/app/controller');
 
 function fakePersistence(): Persistence {
@@ -184,6 +196,21 @@ describe('v0.3.2 · 项9：auditScheduler 与 queueFrame 隔离（BA-F-4）+ 打
     expect(frames[frames.length - 1]?.auditSegmentId).toBe('aaa000');
     expect(frames[frames.length - 1]?.auditRate).toBe(2);
     expect(engine.opSummary()).toContain('setRate(2)');
+  });
+
+  it('BA-F-12：试听 PlayPlan 携带 sequence 真实下标（≥ 0，禁用 -1 哨兵）', () => {
+    const { controller } = setup(auditConfig());
+    capturedPlans.length = 0;
+    controller.startAudition('bbb111');
+    expect(capturedPlans.length).toBe(1);
+    const plan = capturedPlans[0] as {
+      items: Array<{ segmentId: string; sequenceIndex: number }>;
+    };
+    expect(plan.items).toHaveLength(1);
+    expect(plan.items[0].segmentId).toBe('bbb111');
+    // G-3 / BA-F-12：真实下标 = cfg.sequence.indexOf(seg.id)，防御性禁用 -1 哨兵
+    expect(plan.items[0].sequenceIndex).toBeGreaterThanOrEqual(0);
+    expect(plan.items[0].sequenceIndex).toBe(1);
   });
 
   it('矩阵 #1：试听中 togglePlay 暂停/续播，不退出、速率保持段值', () => {
