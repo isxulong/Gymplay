@@ -31,9 +31,10 @@ const COPY_SOURCE_LIMITS =
 const COPY_SHARE_COPYRIGHT =
   '生成的分享链接只包含你的分段、速度和顺序配置，不包含视频本身，接收者需要自行准备同一份视频文件。请确认你有权使用该视频；请只分享链接配置，不要传播未经授权的视频文件。';
 
-/** 速度档位（F4 AC1 初始档位集合）；>2x 为跳过区（P4 听测结论，M-1 约束入 UI） */
-const RATE_PRESETS_NORMAL = [0.5, 0.75, 1, 1.25, 1.5, 2];
-const RATE_PRESETS_SKIP = [3, 4];
+/** 速度档位（F4 AC1 初始档位集合）；>2x 为跳过区（P4 听测结论，M-1 约束入 UI）
+ * v0.3.2 · 项5：单一事实源提取至 rate-presets.ts（BA-F-8），此处改为同源 re-export */
+import { RATE_PRESETS_NORMAL, RATE_PRESETS_SKIP } from './rate-presets';
+export { RATE_PRESETS_NORMAL, RATE_PRESETS_SKIP };
 
 function formatTime(sec: number): string {
   const m = Math.floor(sec / 60);
@@ -434,6 +435,7 @@ export function createEditorView(root: HTMLElement): EditorView {
         onPlayQueue: () => controller.playQueue(),
         onStopQueue: () => controller.stopQueue(),
         onEnterCockpit: () => controller.enterCockpit(),
+        onRate: (id, rate) => controller.setRate(id, rate),
       });
     } else {
       mount(segmentList);
@@ -642,7 +644,7 @@ export function createEditorView(root: HTMLElement): EditorView {
         h('label', { class: 'fvp-field' }, '开始', startInput),
         h('label', { class: 'fvp-field' }, '结束', endInput)),
       boundsError,
-      h('div', { class: 'fvp-field' }, '速度档位', rateRow, skipZone),
+      h('div', { class: 'fvp-field' }, '速度档位（队列播放与试听本段生效；自由预览恒 1x）', rateRow, skipZone),
       deleteBtn,
     );
   }

@@ -722,3 +722,29 @@
   color: #a04000;
   background: #feefe3;
 }
+
+/* ---------- v0.3.2 · 项5：队列项内快捷调速（select + 联动提示，行高恒定） ---------- */
+.queue__rate-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-width: 0;
+}
+.queue__rate {
+  min-height: 36px; /* 触屏命中 */
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid #3a4048;
+  background: #1a1e24;
+  color: inherit;
+}
+.queue__rate-hint {
+  font-size: 11px;
+  color: var(--fvp-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 9em;
+}

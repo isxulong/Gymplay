@@ -9,6 +9,7 @@
 
 import type { PlayerConfig } from '../../core/config/schema';
 import { h, mount, on } from '../dom';
+import { RATE_PRESETS_NORMAL, RATE_PRESETS_SKIP } from '../rate-presets';
 
 export interface QueueCallbacks {
   onToggle(id: string, inQueue: boolean): void;
@@ -20,6 +21,8 @@ export interface QueueCallbacks {
   onStopQueue(): void;
   /** M2：进入练时驾驶舱（F6） */
   onEnterCockpit(): void;
+  /** v0.3.2 · 项5：队列项内快捷调速 → 既有 setRate（调速即停队列语义保留） */
+  onRate(id: string, rate: number): void;
 }
 
 export interface QueueModel {
@@ -135,6 +138,34 @@ export function renderQueue(container: HTMLElement, model: QueueModel, cb: Queue
     on(del, 'click', () => cb.onRemove(i));
 
     const handle = h('span', { class: 'queue__handle', title: '拖拽排序' }, '⠿');
+
+    // v0.3.2 · 项5：队列项内快捷调速 select（档位同详情单一事实源；
+    // 3/4 跳过区带后缀；change → 既有 setRate，调速即停队列语义保留）
+    const rateSelect = h('select', {
+      class: 'queue__rate',
+      'data-testid': `queue-rate-${i}`,
+      title: '速度档位',
+    }) as HTMLSelectElement;
+    for (const r of [...RATE_PRESETS_NORMAL, ...RATE_PRESETS_SKIP]) {
+      rateSelect.append(
+        h('option', { value: String(r) }, r > 2 ? `${r}x（跳过区）` : `${r}x`),
+      );
+    }
+    rateSelect.value = String(e.rate);
+    on(rateSelect, 'change', () => {
+      const r = Number(rateSelect.value);
+      if (Number.isFinite(r) && r !== e.rate) cb.onRate(e.id, r);
+    });
+
+    // v0.3.2 · 项5 · UX-v1.1-C3：同段多处出现时常驻联动提示（改之前就需要知道）
+    const rateGroup = e.totalOccurrences > 1
+      ? h('span', { class: 'queue__rate-group' },
+          rateSelect,
+          h('span', { class: 'queue__rate-hint', 'data-testid': `queue-rate-hint-${i}` },
+            `同段 ${e.totalOccurrences} 处一起变`),
+        )
+      : rateSelect;
+
     const item = h(
       'li',
       {
@@ -146,6 +177,7 @@ export function renderQueue(container: HTMLElement, model: QueueModel, cb: Queue
       handle,
       checkbox,
       h('span', { class: 'queue__label' }, labelText),
+      rateGroup,
       h('span', { class: 'queue__ops' }, up, down, dup, del),
     );
     on(item, 'dragstart', (ev) => {
