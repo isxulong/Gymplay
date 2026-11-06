@@ -47,7 +47,7 @@ vi.mock('../../../src/core/scheduler/scheduler', async (importOriginal) => {
   }
   return { ...mod, SegmentScheduler: CapturingSegmentScheduler };
 });
-const { createEditorController } = await import('../../../src/app/controller');
+const { createEditorController, resolveAuditionSequenceIndex } = await import('../../../src/app/controller');
 
 function fakePersistence(): Persistence {
   return {
@@ -199,6 +199,12 @@ describe('v0.3.2 · 项9：auditScheduler 与 queueFrame 隔离（BA-F-4）+ 打
   });
 
   it('BA-F-12：试听 PlayPlan 携带 sequence 真实下标（≥ 0，禁用 -1 哨兵）', () => {
+    // ⚠ 本条**单独不足以**证明 N-1（禁用 −1 哨兵）：
+    // auditConfig() 把两段都放进了 sequence（['aaa000','bbb111']），所以
+    // cfg.sequence.indexOf(seg.id) 恒 ≥ 0——无论实现是否带 −1 哨兵，这条都绿。
+    // 它证明的只是「段在队列时 sequenceIndex 取 sequence 下标（而非段列表下标）」，
+    // 即正向下标映射没写错；−1 哨兵只会在「段不在队列」时出现，
+    // 覆盖那个场景的是下面两条 N-5 负向 / 正向用例。
     const { controller } = setup(auditConfig());
     capturedPlans.length = 0;
     controller.startAudition('bbb111');
@@ -211,6 +217,70 @@ describe('v0.3.2 · 项9：auditScheduler 与 queueFrame 隔离（BA-F-4）+ 打
     // G-3 / BA-F-12：真实下标 = cfg.sequence.indexOf(seg.id)，防御性禁用 -1 哨兵
     expect(plan.items[0].sequenceIndex).toBeGreaterThanOrEqual(0);
     expect(plan.items[0].sequenceIndex).toBe(1);
+  });
+
+  // ---- N-5：N-1（禁止 −1 哨兵）的负向 / 正向真判据 ----
+  // 负向用例的关键：段**不在** sequence 里，旧实现 `cfg.sequence.indexOf(seg.id)` 在此返回 −1。
+  // 若有人回退成 indexOf 直返，这两条必须变红。
+
+  it('N-5 负向：段存在但不在队列（inQueue=false 且不在 sequence）→ sequenceIndex ≥ 0 且 ≠ -1，queued=false', () => {
+    // 段 ccc222 在 segments 中（下标 2），但不在 sequence、且 inQueue=false。
+    const cfg = makeConfig({
+      segments: [
+        makeSegment({ id: 'aaa000', start: 0, end: 10, label: 'A' }),
+        makeSegment({ id: 'bbb111', start: 10, end: 20, label: 'B' }),
+        makeSegment({ id: 'ccc222', start: 20, end: 30, label: 'C', inQueue: false }),
+      ],
+      sequence: ['aaa000', 'bbb111'],
+    });
+
+    // ① 纯函数层：钉住 resolveAuditionSequenceIndex 的契约
+    const resolved = resolveAuditionSequenceIndex(cfg, 'ccc222');
+    expect(resolved.queued).toBe(false);
+    expect(resolved.sequenceIndex).not.toBe(-1);
+    expect(resolved.sequenceIndex).toBeGreaterThanOrEqual(0);
+    // 兜底落在「段列表下标空间」：ccc222 是 segments[2]
+    expect(resolved.sequenceIndex).toBe(2);
+
+    // ② 端到端层：真实 startAudition 产出的 PlayPlan 里同样不得出现 −1
+    const { controller } = setup(cfg);
+    capturedPlans.length = 0;
+    controller.startAudition('ccc222');
+    expect(capturedPlans.length).toBe(1);
+    const plan = capturedPlans[0] as {
+      items: Array<{ segmentId: string; sequenceIndex: number }>;
+    };
+    expect(plan.items).toHaveLength(1);
+    expect(plan.items[0].segmentId).toBe('ccc222');
+    expect(plan.items[0].sequenceIndex).not.toBe(-1);
+    expect(plan.items[0].sequenceIndex).toBeGreaterThanOrEqual(0);
+    expect(plan.items[0].sequenceIndex).toBe(2);
+  });
+
+  it('N-5 正向：段在 sequence 中 → queued=true，sequenceIndex 等于其在 sequence 的下标', () => {
+    const cfg = makeConfig({
+      segments: [
+        makeSegment({ id: 'aaa000', start: 0, end: 10, label: 'A' }),
+        makeSegment({ id: 'bbb111', start: 10, end: 20, label: 'B' }),
+        makeSegment({ id: 'ccc222', start: 20, end: 30, label: 'C' }),
+      ],
+      // bbb111 在 queue 中位于下标 2（不是段列表下标 1）——用于区分两套下标空间
+      sequence: ['aaa000', 'ccc222', 'bbb111'],
+    });
+
+    const resolved = resolveAuditionSequenceIndex(cfg, 'bbb111');
+    expect(resolved.queued).toBe(true);
+    // sequence 下标 = 2；段列表下标 = 1。取错坐标系会得 1，这里必须得 2。
+    expect(resolved.sequenceIndex).toBe(2);
+    expect(resolved.sequenceIndex).toBe(cfg.sequence.indexOf('bbb111'));
+
+    const { controller } = setup(cfg);
+    capturedPlans.length = 0;
+    controller.startAudition('bbb111');
+    const plan = capturedPlans[0] as {
+      items: Array<{ segmentId: string; sequenceIndex: number }>;
+    };
+    expect(plan.items[0].sequenceIndex).toBe(2);
   });
 
   it('矩阵 #1：试听中 togglePlay 暂停/续播，不退出、速率保持段值', () => {

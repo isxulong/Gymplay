@@ -1,6 +1,12 @@
 /* L5 · 基础样式：CSS Custom Properties 主题变量 + reset（蓝图 §2.4）。
    M0 仅空壳所需最小集；editor.css / cockpit.css 随 M1 / M2 落地。 */
 
+/* v0.3.3 · 项2（X-10）：层级登记表最先加载——它是全仓 z-index 数值的唯一来源，
+   本文件与 editor.css / cockpit.css 一律以 var(--fvp-z-*) 引用。
+   ⚠ 本 @import 必须保持在所有规则之前（CSS 规范要求 @import 先于其它规则；
+   文件头注释不算规则，因此置于注释之后是合法的）。 */
+@import './layers.css';
+
 :root {
   --fvp-bg: #111418;
   --fvp-fg: #f2f4f6;
@@ -57,9 +63,14 @@ body {
 .fvp-sw-toast {
   position: fixed;
   left: 50%;
-  bottom: 16px;
+  /* v0.3.3 · 项1（X-2）：底边距叠加贴底槽高度。v0.3.2 固定 16px 时，通知条矩形
+     597–651 与贴底槽 564.6–667 纵向重叠 54px、横向 186px，命中测试落在通知条上
+     （表现为「点贴底槽却关掉了通知」）。两者层级都压不住对方，只能几何避让。
+     --fvp-dock-height 由 editor.ts 渲染后按贴底槽实测高度写入；缺省 0px 时
+     退化为 v0.3.2 的 16px（回滚安全）。 */
+  bottom: calc(16px + max(var(--fvp-dock-height, 0px), var(--fvp-sheet-band, 0px)));
   transform: translateX(-50%);
-  z-index: 1000;
+  z-index: var(--fvp-z-sw-toast);
   display: flex;
   align-items: center;
   gap: 12px;

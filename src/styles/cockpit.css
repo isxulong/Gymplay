@@ -14,7 +14,7 @@
 .fvp-mode-host--cockpit {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: var(--fvp-z-cockpit-host);
   background: #0b0d10;
 }
 
@@ -38,7 +38,7 @@
   top: env(safe-area-inset-top);
   left: 0;
   right: 0;
-  z-index: 60;
+  z-index: var(--fvp-z-cockpit-hints);
   padding: 8px 12px;
   display: flex;
   flex-direction: column;
@@ -147,7 +147,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 55;
+  z-index: var(--fvp-z-cockpit-panel);
   max-height: 72vh;
   display: flex;
   flex-direction: column;

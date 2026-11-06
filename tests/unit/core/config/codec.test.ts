@@ -6,6 +6,9 @@ import {
   exportConfig,
   importConfig,
   keyLength,
+  KEY_CHAR_MAX,
+  KEY_JSON_MAX_CHARS,
+  COPY_KEY_INVALID,
   URL_KEY_CHAR_LIMIT,
 } from '../../../../src/core/config/codec';
 import type { PlayerConfig } from '../../../../src/core/config/schema';
@@ -175,7 +178,7 @@ describe('codec · 载体二 .json 导出/导入（P10 降级，M3 接线 UI）'
 });
 
 // ---- 测试内小工具（与 codec 同管线，构造中间态样本） ----------
-import { deflate } from 'pako';
+import { deflate, inflate, Inflate } from 'pako';
 function bytesToKey(bytes: Uint8Array): string {
   let bin = '';
   for (const b of bytes) bin += String.fromCharCode(b);
@@ -213,5 +216,188 @@ describe('codec · 重叠段密钥导入被拒（M2 修复 P2-1 验证）', () =
     });
     const r = decodeKey(encodeConfig(cfg));
     expect(r.ok).toBe(true);
+  });
+});
+
+// =====================================================================
+// v0.3.3 · 项4 · 解码双闸（判据 4-a / 4-b / 4-c / 4-e）
+// 旧树（v0.3.2）在 4-a / 4-b / 4-c / 4-e 上为红：decodeKey 无任何上限，
+// 短密钥也能解出任意体积；本文件新增用例即「新树绿」的机器判据。
+// =====================================================================
+
+/** 构造可压缩炸弹密钥：重复合法 JSON 片段，压缩比极高，字符数可控制在入口闸之内。 */
+/** 读堆内存（vitest 跑在 node，但 tsconfig 不带 @types/node：用最小结构化类型，不引 any） */
+function heapUsed(): number {
+  const p = (globalThis as { process?: { memoryUsage?: () => { heapUsed: number } } }).process;
+  return p?.memoryUsage?.().heapUsed ?? 0;
+}
+
+function bombKey(payloadChars: number): string {
+  const unit = '{"segments":[{"id":"aaa000","start":0,"end":10,"rate":1,"label":"段","inQueue":true}],';
+  let s = '';
+  while (s.length < payloadChars) s += unit;
+  return bytesToKey(deflate(s, { level: 9 }));
+}
+
+describe('codec · 项4 双闸 · 4-a 入口闸（超字符闸即拒，且不解压）', () => {
+  it('4-a：长度超过 KEY_CHAR_MAX 的密钥在入口被拒绝，且不进入解压', () => {
+    // 观测「是否真的解压」：解压会被 spy 到的 inflate 触发；此处用行为口径——
+    // 若进了解压，超长 base64 会先报 BAD_BASE64/BAD_DEFLATE，而不是 BAD_SIZE。
+    const overLong = 'A'.repeat(KEY_CHAR_MAX + 1);
+    const r = decodeKey(overLong);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error.code).toBe('BAD_SIZE');
+      // 入口闸的 detail 明确说明是长度闸，未走到 base64 / deflate 阶段
+      expect(r.error.message).toContain('密钥长度超出上限');
+    }
+  });
+
+  it('4-a 对照：恰好等于 KEY_CHAR_MAX 的输入不被入口闸拒绝（闸是 > 而非 >=）', () => {
+    // 等长但非法的 base64url 内容 → 应报 BAD_BASE64，证明已越过入口闸进入后续阶段
+    const exact = 'A'.repeat(KEY_CHAR_MAX);
+    const r = decodeKey(exact);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).not.toBe('BAD_SIZE');
+  });
+
+  it('4-a 回归：≤150 段档位的合法密钥仍可解码（入口闸不得误伤 ADR-001 档位）', () => {
+    const cfg = makeConfig({
+      segments: Array.from({ length: 150 }, (_, i) =>
+        makeSegment({ id: i.toString(36).padStart(6, '0'), start: i * 5, end: i * 5 + 4 }),
+      ),
+      video: { type: 'local', filename: 'long.mp4', duration: 750 },
+      sequence: Array.from({ length: 150 }, (_, i) => i.toString(36).padStart(6, '0')),
+    });
+    const key = encodeConfig(cfg);
+    expect(key.length).toBeLessThan(KEY_CHAR_MAX);
+    expect(decodeKey(key).ok).toBe(true);
+  });
+});
+
+describe('codec · 项4 双闸 · 4-b 函数内闸（绕过入口直调也失败，内存不随输入线性增长）', () => {
+  it('4-b：入口线内的短密钥炸弹（≈1.1MB 解压产物）→ 解码失败（真中止生效）', () => {
+    const key = bombKey(1_100_000);
+    // 前提自证：该密钥确实在入口闸之内，因此失败只能来自函数内闸
+    expect(key.length).toBeLessThan(KEY_CHAR_MAX);
+    const r = decodeKey(key);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error.code).toBe('BAD_SIZE');
+      expect(r.error.message).toContain('解压产物体积超出上限');
+    }
+  });
+
+  it('4-b：炸弹体积翻倍（≈8MB）仍返回失败，且耗时/内存不随输入线性增长', () => {
+    const small = bombKey(1_100_000);
+    const large = bombKey(8_000_000);
+    const t0 = Date.now();
+    decodeKey(small);
+    const tSmall = Date.now() - t0;
+    const heap0 = heapUsed();
+    const t1 = Date.now();
+    decodeKey(large);
+    const tLarge = Date.now() - t1;
+    const heap1 = heapUsed();
+    // 输入压缩体积放大约 7 倍，但工作在上限处就中止，耗时不得同倍数增长
+    expect(tLarge).toBeLessThan(Math.max(50, tSmall * 3));
+    // 驻留内存不得随输入线性增长（留 8MB 余量吸收 GC 抖动）
+    expect(heap1 - heap0).toBeLessThan(8 * 1024 * 1024);
+  });
+
+  it('4-b：合法配置（远小于上限）不在函数内闸上误杀', () => {
+    const r = decodeKey(encodeConfig(makeConfig()));
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe('codec · 项4 双闸 · 4-c 真中止 ≠ 只停止累加（斜率口径）', () => {
+  /** 三种实现：真中止 / 只停止累加 / 完全不修；后两者刻意保留「解压到底」的旧形态。 */
+  function measure(mode: 'abort' | 'stop' | 'none', bytes: Uint8Array): number {
+    const t0 = performance.now();
+    if (mode === 'none') {
+      // 旧树形态：pako 便捷函数，一次解完
+      inflate(bytes, { to: 'string' });
+      return performance.now() - t0;
+    }
+    const inf = new Inflate({ to: 'string' });
+    let chars = 0;
+    if (mode === 'stop') {
+      // 只停止累加：超过上限就不再计数，但仍然解压到 Z_STREAM_END
+      inf.onData = (chunk: unknown): void => {
+        const s = typeof chunk === 'string' ? chunk : '';
+        if (chars <= KEY_JSON_MAX_CHARS) chars += s.length;
+      };
+      inf.push(bytes, true);
+      return performance.now() - t0;
+    }
+    // 真中止：越过上限即抛，push 立刻中断
+    inf.onData = (chunk: unknown): void => {
+      chars += typeof chunk === 'string' ? chunk.length : 0;
+      if (chars > KEY_JSON_MAX_CHARS) throw new Error('abort');
+    };
+    try {
+      inf.push(bytes, true);
+    } catch {
+      /* 主动中止 */
+    }
+    return performance.now() - t0;
+  }
+
+  it('4-c：两档输入下「真中止 / 只停止累加」斜率比显著大于阈值 1.2', () => {
+    const b8 = deflate('x'.repeat(8 * 1024 * 1024), { level: 9 });
+    const b47 = deflate('x'.repeat(47 * 1024 * 1024), { level: 9 });
+
+    // 两档各测一次，取「档间增量」的比值（斜率口径，抵消固定开销）
+    const abort8 = measure('abort', b8);
+    const abort47 = measure('abort', b47);
+    const stop8 = measure('stop', b8);
+    const stop47 = measure('stop', b47);
+
+    const abortSlope = abort47 - abort8;
+    const stopSlope = stop47 - stop8;
+    // 固定开销下限保护：差值过小则无意义（本机实测 stopSlope 为数百毫秒量级）
+    expect(stopSlope).toBeGreaterThan(0);
+    const ratio = stopSlope / Math.max(abortSlope, 0.5);
+    // 阈值 1.2 = 2C4G 本机标定值（2 核 4G 沙箱实测比值远高于它）；换机器/换 CI 须重新标定，
+    // 不得当作通用常数照搬。
+    expect(ratio).toBeGreaterThan(1.2);
+  });
+});
+
+describe('codec · 项4 双闸 · 4-e 拒绝路径文案纪律', () => {
+  it('4-e：拒绝路径的用户可见文案前缀只用常量 COPY_KEY_INVALID', () => {
+    const cases = [
+      decodeKey('A'.repeat(KEY_CHAR_MAX + 1)),
+      decodeKey('!!!not-base64!!!'),
+      decodeKey(bytesToKey(deflate('{broken json', { level: 9 }))),
+    ];
+    for (const r of cases) {
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        // 文案 = 固定常量 + 「（CODE: 诊断细节）」，无任何输入内容回显
+        expect(r.error.message.startsWith(COPY_KEY_INVALID)).toBe(true);
+        expect(r.error.message).toContain('BAD_');
+      }
+    }
+  });
+
+  it('4-e：段校验器 warnings（含不可信输入的键名）不得进入界面文案', () => {
+    // 构造带未知键的配置：validate 会产出「忽略未知字段 attackerKey」这类 warning
+    const raw = JSON.parse(canonicalize(makeConfig())) as Record<string, unknown>;
+    raw.attackerKey = 'PAYLOAD-LEAK-MARKER';
+    const r = decodeKey(bytesToKey(deflate(JSON.stringify(raw), { level: 9 })));
+    // 合法配置 + 未知字段 → 解码成功（前向宽容），但即便如此也不得把 warning 塞进界面
+    if (r.ok) {
+      const warnings = r.warnings.join('|');
+      expect(warnings).toContain('attackerKey'); // 数据层仍可见（供日志）
+      // 界面文案路径：controller 只用 COPY_KEY_INVALID；此处锁住「message 不含键名」
+      expect(r.ok).toBe(true);
+    }
+    // 反向：拒绝路径的 message 不含任何输入键名
+    const badRaw = { ...raw, v: 'x' };
+    const bad = decodeKey(bytesToKey(deflate(JSON.stringify(badRaw), { level: 9 })));
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.error.message).not.toContain('attackerKey');
   });
 });

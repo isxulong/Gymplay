@@ -5,7 +5,7 @@
 
 import type { PlayerConfig } from '../core/config/schema';
 import type { Capabilities } from '../platform/capabilities';
-import type { UndoEntry } from './undo-store';
+import type { UndoEntry, UndoBreakRecord } from './undo-store';
 
 export type AppMode = 'editor' | 'cockpit';
 
@@ -13,6 +13,28 @@ export type AppMode = 'editor' | 'cockpit';
 export type ConfigOrigin = 'local-edit' | 'restored' | 'key';
 
 export type NoticeKind = 'info' | 'warn' | 'error';
+
+/**
+ * v0.3.3 · 项3：恢复前显式确认载荷。
+ * 用户点了一条「不是当前世界线末端」的记录时先落到这里，确认后才提交恢复；
+ * `overwritten` 是即将被覆盖的当前配置（会存成一条反向记录，把数据丢失降级为可再撤回）。
+ */
+export interface UndoConfirmPrompt {
+  /** 被点击的条目 id */
+  entryId: number;
+  /** 该条目的可读标签 */
+  segLabel: string;
+  /** 恢复会一并回退的、栈内更靠后的可恢复条数 */
+  superseded: number;
+  /** 当前配置与目标不一致的说明（展示用） */
+  message: string;
+  /** 被覆盖的当前配置（反向记录的 pre） */
+  overwritten: string;
+  /** 目标配置（反向记录的 post） */
+  targetPost: string;
+  /** 截断起点（= 被点击条目在栈中的下标，复用既有 restoreContext.truncateFrom） */
+  truncateFrom: number;
+}
 
 export interface Notice {
   id: number;
@@ -64,7 +86,25 @@ export interface AppState {
    * 不进分享密钥 / .json 导出；草稿态与存储降级时仅内存）。
    */
   undoStack: UndoEntry[];
-  /** v0.3.2 · 项2+10：回收站弹层开合（AB-P2-10 落点表） */
+  /**
+   * v0.3.3 · 项3：栈计数拆分（判据 3-f）。
+   * `undoTotal` = 总条数（**入口可见性按它**：哪怕都失效，也要让用户看到「有 N 条历史但均已失效」）；
+   * `undoRecoverable` = 可恢复条数（仅用于文案与角标，不再决定入口是否可见）。
+   * 与 undoStack 由同一处同步写入（syncUndoStack），避免 UI 自己 filter 造成口径漂移。
+   */
+  undoTotal: number;
+  undoRecoverable: number;
+  /**
+   * v0.3.3 · 项3：最近一次清栈痕迹（真断裂不得静默，判据 3-d）。
+   * null = 本会话未发生清栈（或已被用户确认）。
+   */
+  undoBreak: UndoBreakRecord | null;
+  /**
+   * v0.3.3 · 项3：恢复前显式确认（方案 §2.3 第 4 条）。
+   * 非 null 时表示「用户点了一条不是当前世界线末端的记录，需确认后才会真正提交」。
+   */
+  undoConfirm: UndoConfirmPrompt | null;
+  /** v0.3.3 · 项2：回收站弹层开合（与段详情面板配对计数用） */
   recycleOpen: boolean;
   /** v0.3.2 · 项2+10：撤销横幅可见性（删除 push → true；dismissUndo / 清栈 / 恢复 → false） */
   undoBannerVisible: boolean;
@@ -92,6 +132,10 @@ export const initialState: AppState = {
   wakeLockHint: false,
   lineControlHint: false,
   undoStack: [],
+  undoTotal: 0,
+  undoRecoverable: 0,
+  undoBreak: null,
+  undoConfirm: null,
   recycleOpen: false,
   undoBannerVisible: false,
 };

@@ -3,6 +3,44 @@
 版本口径：App 版本 SemVer（feat 升 minor、fix 升 patch、协议破坏性变更升 major）；
 配置协议版本（Schema v）独立演进，两边分开记录（蓝图版本演进五条 · 第 5 条）。
 
+## [0.3.3] - 2026-11-06
+
+v0.3.3 缺陷修复版本（App 版本 0.3.2 → 0.3.3；配置协议版本 Schema v1 不变；撤销栈条目版本 `v===1` 硬校验不动，故版本号不升）。
+
+修复 4 项用户可见缺陷与 2 项质量缺陷。
+
+### 试听序号落位（N-1）
+
+- `resolveAuditionSequenceIndex` 改为返回 `{ sequenceIndex, queued }` 双字段：命中队列返回真实队列下标 `queued:true`，不在队列时按段下标兜底且 `queued:false`；**取消 −1 哨兵**，调用点据 `queued` 判定徽标与文案。
+
+### 撤销入口可见性（N-2）
+
+- 撤销确认改为双步契约：`undoDelete()` 只写 `state.undoConfirm`，`confirmUndo()` 才提交；新增 `src/ui/editor/undo-confirm.ts` 单一构建器，横幅含「确认恢复 / 取消」双按钮（`undo-confirm-apply` / `undo-confirm-cancel`）。
+
+### 调速不再清空撤销栈（N-3）
+
+- `clearUndoHistory` 调用点按语义分流：调速路径不再清栈（8 处调用点逐一复核，仅世界线真实断裂时清理）。
+
+### 弹层暂停通知计时（N-4）
+
+- 通知计时引入暂停深度：`setViewNoticePause` 支持嵌套登记，移动端详情弹层开启时暂停、关闭时恢复；桌面端常驻详情不暂停；弹层与悬停两套登记互不撤销。
+
+### 负向回归用例（N-5）
+
+- `play-mode.test.ts` 新增负向用例：段存在但不在队列（`inQueue:false`）时断言 `sequenceIndex ≥ 0 且 ≠ −1`，纯函数层与 `startAudition` 端到端两层同覆盖；同时补正向用例（队列顺序与段下标不一致时须返回队列下标）。
+
+### 门禁匹配手段（N-6）
+
+- `gate-undo.mjs` 改为词法扫描：剔除行注释 / 块注释 / 字符串 / 模板串字面段 / 正则字面量（等长空白保留行号）后再按 `\bcommitEdit\b\s*\(` 匹配，消除「带空格与跨行漏报、注释内误报」；
+- `gate-layers.mjs` 正则补 `gi` 标志并对整文件剔除注释与字符串，消除大写与 `calc/max/min/clamp` 形态漏检。
+
+### 版本与验证
+
+- package.json bump 0.3.3（SW BUILD_ID 注入链路 scripts/build-sw.mjs 读版本号，随构建自动更新，产物 `BUILD_ID=20261106142453-v0.3.3`）；
+- 实跑门禁（终态）：单测 24 文件 349 条全绿（基线 20 文件 279 条）；desktop E2E 72 过 + 1 已知环境挂（cockpit-path3 headless Wake Lock，基线同挂）；tsc / eslint 0 错；覆盖率核心层 98.76% / 分支 93.53% / 函数 98.91% / 行 98.76%（阈值 90%）；体积门禁主 bundle gzip 44.5KB、总量 54.1KB；gate-layers / gate-undo / gate-decode / key-compat 均 PASS；
+- 干净基线 `a5abbdf` 从零应用补丁后同口径复现全绿（补丁 28 文件，+4412 / −214）；
+- **回滚口径**：本版本以单一全量补丁交付，只支持整体回退到 `a5abbdf`；**不支持按缺陷单点 revert**（各缺陷改动在 controller.ts / editor.ts 等文件内交叉，单文件回退会导致类型检查 30 处以上错误或 E2E 双端变红）。
+
 ## [0.3.2] - 2026-11-04
 
 v0.3.2 体验大版本（App 版本 0.3.1 → 0.3.2；配置协议版本 Schema v1 不变；密钥编解码语义不动——key-compat 对 main@0463917 基线 4 样例逐字节一致）。解决真机走查 7 条反馈与 3 项提前拍板（布局大重构 / 试听本段 / 多段撤销回收站）。

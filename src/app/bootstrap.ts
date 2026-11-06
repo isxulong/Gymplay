@@ -17,7 +17,7 @@ import { readKeyFromLocation } from '../core/config/hash';
 import { createPersistence, type Persistence } from '../core/config/persistence';
 import type { PlayerConfig } from '../core/config/schema';
 import { detectCapabilities } from '../platform/capabilities';
-import { restoreUndoStack, readUndoRaw } from './undo-store';
+import { restoreUndoStack, readUndoRaw, undoCounts } from './undo-store';
 import { createStore, type Store } from './store';
 import { initialState, type AppState, type Notice } from './state';
 
@@ -74,6 +74,7 @@ export function bootstrap(): AppContext {
   //    任一失败 / 失配 → 整栈丢弃（数据层兜底；会话内的「置灰不清栈」分层在 controller）。
   //    草稿态挂起时本地配置仍是世界线基准（草稿应用 / 丢弃都会清栈，见 controller）。
   const undoRestored = restoreUndoStack(readUndoRaw(), config);
+  const undoCountsInit = undoCounts(undoRestored.entries);
 
   const store = createStore<AppState>({
     ...initialState,
@@ -84,7 +85,12 @@ export function bootstrap(): AppContext {
     needsVideo: config !== null,
     notices,
     undoStack: undoRestored.entries,
-    // 重放横幅：栈里有可恢复的删除条目时恢复可见（回收站计数由 undoStack 派生）
+    // 项3（判据 3-f）：入口可见性按**总条数**，可恢复条数只用于文案/角标
+    undoTotal: undoCountsInit.total,
+    undoRecoverable: undoCountsInit.recoverable,
+    // 项3（判据 3-d）：上次会话留下的清栈痕迹（真断裂不得静默）
+    undoBreak: undoRestored.lastBreak,
+    // 重放横幅：栈里有可恢复的删除条目时恢复可见
     undoBannerVisible: undoRestored.entries.some((e) => !e.stale && e.kind !== 'restore'),
   });
 

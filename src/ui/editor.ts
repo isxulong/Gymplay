@@ -17,6 +17,7 @@ import {
   COPY_KEY_TOO_LONG,
   COPY_REPLACE_CONFIRM,
 } from '../app/controller';
+import { foldNotices } from '../app/notice-center';
 import type { AppState } from '../app/state';
 import type { Store } from '../app/store';
 import { topActiveDeletion, activeUndoEntries } from '../app/undo-store';
@@ -25,6 +26,8 @@ import { h, mount, on } from './dom';
 import { createTimelineBar, type TimelineBar } from './editor/timeline-bar';
 import { renderQueue } from './editor/queue-view';
 import { createRecycleView } from './editor/recycle-view';
+import { buildUndoConfirmBanner } from './editor/undo-confirm';
+import { readUndoCounts, recycleBinText } from './editor/undo-counts';
 import { formatClock, parseTimeInput } from './editor/time-input';
 
 /** 文案 A · 视频源限制（需求稿成稿，空状态页 + 导入区常驻） */
@@ -104,6 +107,8 @@ export function createEditorView(root: HTMLElement): EditorView {
   // 显式标注：notice-stack 的 sticky 不改写 UX-v1.1-C6——C6 仅约束决策横幅，决策横幅随文档流。
   const noticeStack = h('div', { class: 'fvp-notice-stack', 'data-testid': 'notice-stack' });
   const bannerStack = h('div', { class: 'fvp-banner-stack', 'data-testid': 'banner-stack' });
+  // v0.3.3 · 项1：fixed 贴底槽的文档流占位（高度跟随 --fvp-dock-height）
+  const dockSpacer = h('div', { class: 'fvp-dock-spacer', 'aria-hidden': 'true' });
 
   const video = h('video', {
     class: 'player__video',
@@ -270,25 +275,69 @@ export function createEditorView(root: HTMLElement): EditorView {
     needsVideoBtn,
   );
 
-  mount(
-    root,
-    h(
-      'div',
-      { class: 'fvp' },
-      h('header', { class: 'fvp__header' }, h('h1', {}, 'Gymplay · 编辑器'), recycleBinBtn, saveState),
-      noticeStack,
-      bannerStack,
-      emptyState,
-      needsVideoPane,
-      editorMain,
-      sheetScrim,
-      recycleRoot,
-    ),
-    fileInput,
-    configFileInput,
+  const shell = h(
+    'div',
+    { class: 'fvp' },
+    h('header', { class: 'fvp__header' }, h('h1', {}, 'Gymplay · 编辑器'), recycleBinBtn, saveState),
+    noticeStack,
+    emptyState,
+    needsVideoPane,
+    editorMain,
+    sheetScrim,
+    // v0.3.3 · 项1（N-2）：贴底槽是 `position: fixed`，脱离文档流、常驻视口底部。
+    // 它不再需要像 sticky 那样依赖「自然位置低于视口底」这一前提，放在文档流哪里
+    // 都不影响吸底行为；保留在末尾只为 DOM 顺序直观（视觉上由 fixed 决定）。
+    bannerStack,
+    // 占位条：fixed 脱离文档流后被遮挡的末尾空间补偿（见 editor.css 同名规则注释）。
+    dockSpacer,
+    recycleRoot,
   );
 
+  mount(root, shell, fileInput, configFileInput);
+
   let controllerRef: EditorController | null = null;
+
+  /**
+   * v0.3.3 · 项1：把贴底槽实测高度写入 `--fvp-dock-height`。
+   *
+   * 用途单一：给**固定定位**的通知条（`.fvp-sw-toast`）提供避让量——它无法用文档流
+   * 或 sticky 看到贴底槽，只能靠这个变量把底边距整体抬上去，从而保证两者纵向重叠为 0
+   *（判据 1-e / X-2）。贴底槽自身的高度由内容决定，不做任何赋值。
+   *
+   * 写入值取 `bannerStack` 的真实渲染高度（`getBoundingClientRect().height`）；
+   * 无横幅时为 0，通知条退回 v0.3.2 的 16px 底边距。
+   */
+  function syncDockHeight(): void {
+    const h = bannerStack.getBoundingClientRect().height;
+    // 亚像素高度向上取整：宁多让 1px，也不让通知条压进贴底槽 1px（判据是「重叠 = 0」）
+    const px = h > 0 ? Math.ceil(h) : 0;
+    // 必须写在 documentElement：`.fvp-sw-toast` 由 ui/sw-update.ts 直接 append 到
+    // document.body，它不在 #app 子树内，因此读不到写在 #app / .fvp 上的自定义属性。
+    document.documentElement.style.setProperty('--fvp-dock-height', `${px}px`);
+
+    // v0.3.3 · 项1 修订（X-2 补强）：段详情面板打开时，通知条只避让贴底槽是**不够的**。
+    // 面板是 `position: fixed; bottom: 0` 且层级 45 < 槽 58，但面板打开时其顶部会
+    // 高过贴底槽顶部（实测：提示条 494.6–548.6，与面板重叠 54px、与「删除此段」重叠
+    // 43px，按钮中心点过去点到的是「刷新即更新」）。因此避让量要取「槽高」与
+    // 「面板露在视口里的高度」两者的较大值。
+    // --fvp-sheet-band 由 syncSheetBand() 按面板实测高度写入（不可见时写 0px），
+    // 通知条的 bottom 用 max() 复合这两个量（见 base.css `.fvp-sw-toast`）。
+    if (!document.documentElement.style.getPropertyValue('--fvp-sheet-band')) {
+      document.documentElement.style.setProperty('--fvp-sheet-band', '0px');
+    }
+  }
+
+  /**
+   * v0.3.3 · 项1 修订：把当前可视的段详情面板高度写入 `--fvp-sheet-band`。
+   * 只统计面板本身的 `getBoundingClientRect().height`——它就是被 fixed 面板
+   * 压在视口底部的那一段；面板隐藏（display:none）时量到 0，自然归零。
+   */
+  function syncSheetBand(): void {
+    const sheet = detailSheet;
+    const visible = !sheet.hidden && sheet.getBoundingClientRect().height > 0;
+    const px = visible ? Math.ceil(sheet.getBoundingClientRect().height) : 0;
+    document.documentElement.style.setProperty('--fvp-sheet-band', `${px}px`);
+  }
 
   function bind(store: Store<AppState>, controller: EditorController): void {
     controllerRef = controller;
@@ -418,6 +467,14 @@ export function createEditorView(root: HTMLElement): EditorView {
     store.subscribe((state) => render(state, store, controller));
     render(store.get(), store, controller);
 
+    // v0.3.3 · 项1：贴底槽高度随横幅增减而变（撤销条 / 冲突条 / 换视频条 / 存储降级条
+    // 各自出现或消失）。ResizeObserver 盯容器自身高度，变化即回写 CSS 变量——
+    // 这样 .fvp-sw-toast 的避让量始终与真实槽高一致，不必在每处渲染代码里手工同步。
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => syncDockHeight());
+      ro.observe(bannerStack);
+    }
+
     controller.onFrame((t, q) => renderFrame(t, q));
   }
 
@@ -483,11 +540,16 @@ export function createEditorView(root: HTMLElement): EditorView {
     }
 
     renderBanners(state, controller);
+    // v0.3.3 · 项2：弹层开合（detail / recycle / cockpit）的暂停登记**不在本层**——
+    // 唯一登记处是 controller 的 syncViewNoticePause()（见 src/app/controller.ts）。
+    // 本层只保留 hover/focus 的 pointerover/out、focusin/out 接线（键 'hover'）。
 
     // v0.3.2 · 项2+10：回收站入口计数（N = 可恢复删除步数；N=0 隐藏）+ 弹层渲染
-    const recoverable = state.undoStack.filter((e) => !e.stale && e.kind !== 'restore').length;
-    recycleBinBtn.hidden = recoverable === 0;
-    recycleBinBtn.textContent = `🗑 回收站 (${recoverable})`;
+    // v0.3.3 · 项3（3-f）：可见性改按**总条数**判定（不再因「全部失效」而隐藏入口）；
+    // 文案区分「有 N 条可恢复」与「N 条但都已失效」。口径集中在 undo-counts.ts。
+    const counts = readUndoCounts(state);
+    recycleBinBtn.hidden = counts.total === 0;
+    recycleBinBtn.textContent = recycleBinText(counts);
     recycleView?.render(state);
 
     // 需配对视频提示
@@ -528,6 +590,8 @@ export function createEditorView(root: HTMLElement): EditorView {
       sheetScrim.hidden = true;
       mount(detailBody);
       mount(queueContainer);
+      // v0.3.3 · 项1 修订：面板收起 → 避让量归零
+      syncSheetBand();
     }
 
     renderSharePanel(state, controller);
@@ -538,9 +602,30 @@ export function createEditorView(root: HTMLElement): EditorView {
     // v0.3.2 · 项1（C1 裁决）：决策横幅（常驻、无计时）挂 banner-stack（文档流原位）
     const decisionNodes: Node[] = [];
 
+    // v0.3.3 · 项3 补丁：恢复前显式确认（P0 回归修复）。
+    //
+    // 两条「撤销」相关提示的**互斥裁定**：`undoConfirm` 非 null 时**不渲染**撤销横幅
+    //（见下方 `state.undoBannerVisible && state.undoConfirm === null` 的短路条件）。
+    // 理由：撤销横幅的 [撤销] 也走 `undoDelete`，而确认框 pending 时再点它只会把
+    // `state.undoConfirm` 换成另一条目的确认——用户会看到「撤销」与「确认恢复」两个
+    // 都在说撤销，点其中一个还会改掉另一个的内容。让确认框独占这段提示区后，
+    // 语义链是唯一的一条：[恢复] → 确认框（确认 / 取消）；取消后 `undoBannerVisible`
+    // 仍是原值，撤销横幅自然回来，无需额外状态。
+    //
+    // 挂载位：回收站面板打开时改由 recycle-view 渲染——面板 `.recycle-root` 是
+    // `inset: 0` 的全屏覆盖层（层级 60），高于贴底槽 58，挂这里会被整块遮住，
+    // 用户看到的仍是「什么都没发生」。此处只在面板收起时挂 banner-stack。
+    // 两处条件互斥（`!state.recycleOpen` vs `state.recycleOpen`），
+    // 同一时刻 DOM 中只有一份 `undo-confirm-*` 节点，不会出现双按钮。
+    if (!state.recycleOpen) {
+      const confirmBanner = buildUndoConfirmBanner(state, controller);
+      if (confirmBanner) decisionNodes.push(confirmBanner);
+    }
+
     // v0.3.2 · 项2+10：撤销横幅（UX-v1.1-N2 常驻语义）——删除后置顶渲染；
     // [撤销] = undo(栈顶最近可恢复删除)；[知道了] = dismissUndo（栈保留，回收站仍可恢复）
-    if (state.undoBannerVisible) {
+    // v0.3.3 · 项3 补丁：确认框 pending 时让位（互斥裁定见上方注释）。
+    if (state.undoBannerVisible && state.undoConfirm === null) {
       const top = topActiveDeletion(state.undoStack);
       if (top) {
         const rest = activeUndoEntries(state.undoStack).filter((e) => e.kind !== 'restore').length - 1;
@@ -600,24 +685,33 @@ export function createEditorView(root: HTMLElement): EditorView {
     }
 
     // v0.3.2 · 项1：通知栈挂 notice-stack（sticky 吸顶）；aria——info 礼貌播报、warn/error 告警
+    // v0.3.3 · 项2（2-c）：warn/error 按「同文案折叠计数 + 独立上限 3 条」呈现；
+    // 折叠是**纯展示层**行为（foldNotices 不增删 store 里的条目）——info 不折叠，
+    // 保持 v0.3.2 的「4 条同文案 info 仍 4 行」既有口径。
     const noticeNodes: Node[] = [];
-    for (const n of state.notices) {
-      const close = h('button', { class: 'fvp-notice__close', 'data-testid': `notice-close-${n.id}` }, '×');
-      on(close, 'click', () => controller.dismissNotice(n.id));
+    for (const item of foldNotices(state.notices)) {
       const ariaAttrs: Record<string, string> =
-        n.kind === 'info'
+        item.kind === 'info'
           ? { role: 'status', 'aria-live': 'polite' }
           : { role: 'alert' };
+      const close = h('button', { class: 'fvp-notice__close', 'data-testid': `notice-close-${item.ids[0]}` }, '×');
+      // 折叠组关闭 = 整组一并关闭（用户点「×」的意思是「这条提示别再显示」）
+      on(close, 'click', () => {
+        for (const id of item.ids) controller.dismissNotice(id);
+      });
       noticeNodes.push(
         h(
           'div',
           {
-            class: `fvp-notice fvp-notice--${n.kind}`,
+            class: `fvp-notice fvp-notice--${item.kind}`,
             'data-testid': 'notice',
-            'data-kind': n.kind,
+            'data-kind': item.kind,
+            ...(item.count > 1 ? { 'data-fold-count': String(item.count) } : {}),
             ...ariaAttrs,
           },
-          h('span', {}, n.text),
+          h('span', {}, item.text),
+          // v0.3.3 · 项2（2-c）：同一文案重复出现 → 「×N」折叠计数（info 永不折叠，count 恒 1）
+          ...(item.count > 1 ? [h('span', { class: 'fvp-notice__fold', 'data-testid': 'notice-fold' }, `×${item.count}`)] : []),
           close,
         ),
       );
@@ -625,6 +719,8 @@ export function createEditorView(root: HTMLElement): EditorView {
 
     mount(bannerStack, ...decisionNodes);
     mount(noticeStack, ...noticeNodes);
+    // v0.3.3 · 项1：贴底槽高度写回 CSS 变量（供 .fvp-sw-toast 避让引用，判据 1-e）
+    syncDockHeight();
   }
 
   // ---------- 段落条 + 选中段编辑（v0.3.2 · 项8：renderSegments 拆分为列表 / 详情两个渲染单元） ----------
@@ -678,6 +774,8 @@ export function createEditorView(root: HTMLElement): EditorView {
     sheetScrim.hidden = selected === undefined;
     if (!selected) {
       mount(detailBody);
+      // v0.3.3 · 项1 修订：面板收起 → 避让量归零（否则通知条会永久上抬一段）
+      syncSheetBand();
       return;
     }
 
@@ -801,6 +899,10 @@ export function createEditorView(root: HTMLElement): EditorView {
       auditionBtn,
       deleteBtn,
     );
+
+    // v0.3.3 · 项1 修订：面板显隐与高度都变了 → 刷新通知条的避让量（--fvp-sheet-band）。
+    // 放在 mount 之后：此时 detailBody 已重排，量到的是本次渲染的真实高度。
+    syncSheetBand();
   }
 
   // ---------- 分享面板（文案 B 确认 → 生成；F8 AC1；P10 超限 → 引导导出） ----------

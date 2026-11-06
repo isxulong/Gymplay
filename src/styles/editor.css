@@ -129,20 +129,58 @@
 
 /* ---------- 横幅与通知 ---------- */
 
-/* v0.3.2 · 项1（C1 裁决）：通知栈 sticky 吸顶（UX-反馈1）；决策横幅留文档流原位（UX-v1.1-C6） */
+/* v0.3.2 · 项1（C1 裁决）：通知栈 sticky 吸顶（UX-反馈1）。
+   v0.3.3 · 项2（2-g / X-3）：层级从 30 提到 52——30 低于段详情面板 45，是 N-4
+   「弹层遮住通知」的直接成因。52 严格大于 45（不再被面板压住）、严格小于 60
+   （不浮在回收站全屏层之上）。*/
 .fvp-notice-stack {
   position: sticky;
   top: 0;
-  z-index: 30;
+  z-index: var(--fvp-z-notice-editor);
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
+/* v0.3.3 · 项1（N-2）：决策横幅容器改为**视口底部贴底槽**（层级 58）。
+   撤销入口因此常驻可见，不再随内容滚出视口。
+
+   v0.3.3 · 项1 修订（sticky → fixed，判据 1-b 口径收紧）：
+   v0.3.2/首版用 `position: sticky; bottom: 0` 时，满滚会「释放」并停在被 `#app`
+   { padding: 16px } 约束的父框之内，顶部比视口底高 15.6px（实测 top 549 vs 期望
+   564.6）。这 15.6px 不是真实的设计偏移，而是 sticky 在父框边界释放造成的**假偏差**。
+   改为 `position: fixed` 后贴底槽脱离文档流、不再受 `#app` 内边距约束，满滚时
+   顶部仍严格等于 `视口高 − 槽高`，该假偏差归零，1-b 容差因此从 ±16 收紧到 ±8。
+
+   代价与配套（两条都不可省）：
+   - fixed 脱离文档流 → 页面末尾会被贴底槽遮挡。为此 `.fvp` 末尾保留一个
+     零高度占位条 `.fvp-dock-spacer`，其高度由 editor.ts 写入（= 槽高 + 16px 底距），
+     让主文档流末尾留出与槽等高的空白（对应「页面主体末尾遮挡」这一未验证项）。
+   - fixed 元素的包含块是视口，不再跟随 `.fvp` 的 720/1120 居中列宽。因此按
+     `left:50% + translateX(-50%)` + `width: min(720px, 100% - 32px)` 复刻同一列宽
+     口径（`#app { padding: 16px }` 在 v0.3.2 里也让内容宽比视口少 32px），
+     避免在桌面档宽屏下横幅被拉满全屏（与 v0.3.2 视觉一致）。
+   - 背景色防止内容从横幅间隙透出；不加 padding / border，保持高度口径与
+     方案实测值（贴底槽高 ~102px、面板留白 118px）一致。*/
 .fvp-banner-stack {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: min(720px, calc(100% - 32px));
+  z-index: var(--fvp-z-dock);
   display: flex;
   flex-direction: column;
   gap: 8px;
+  background: var(--fvp-bg);
+}
+
+/* 贴底槽占位条（fixed 脱离文档流后的空间补偿）。
+   高度由 editor.ts 的 syncDockHeight() 写入 `--fvp-dock-height`，此处引用同一变量：
+   槽无横幅时高度 0 → 占位条 0，不产生多余空白。 */
+.fvp-dock-spacer {
+  flex: none;
+  height: calc(var(--fvp-dock-height, 0px) + 16px);
 }
 
 .fvp-banner {
@@ -193,6 +231,15 @@
 .fvp-notice--error {
   background: #3a1d1d;
   border: 1px solid #ff453a;
+}
+
+/* v0.3.3 · 项2（2-c）：同文案折叠计数「×N」——不撑开行高，紧贴文案尾部 */
+.fvp-notice__fold {
+  flex: none;
+  margin-left: auto;
+  color: var(--fvp-muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
 }
 
 .fvp-notice__close {
@@ -318,7 +365,7 @@
   width: 2px;
   background: #fff;
   pointer-events: none;
-  z-index: 3;
+  z-index: var(--fvp-z-playhead);
 }
 
 .tl__tick {
@@ -430,7 +477,7 @@
 .detail-scrim {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: var(--fvp-z-detail-scrim);
   background: rgba(0, 0, 0, 0.5);
 }
 
@@ -444,7 +491,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 45;
+  z-index: var(--fvp-z-detail-sheet);
   width: 100%;
   max-width: 560px;
   margin: 0 auto;
@@ -454,7 +501,13 @@
   border: 1px solid #3a4048;
   border-bottom: none;
   border-radius: 14px 14px 0 0;
-  padding: 10px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+  /* v0.3.3 · 项1（X-1）：底部留白 +118px 给贴底槽让位。
+     不加时贴底槽（层级 58）覆盖在面板（层级 45）之上，「删除此段」按钮矩形
+     top 609 / bottom 653 被槽的 top 564.6 / bottom 667 压住，命中测试落在槽的
+     操作区而不是按钮。加 118px 后按钮矩形为 top 491.4 / bottom 535.4，命中自身。
+     ⚠ 已知未验证：本沙箱 env(safe-area-inset-bottom) 实测为 0，真机约 34px 安全区
+       未计入这 118px；真机需复测该判据。 */
+  padding: 10px 16px calc(14px + env(safe-area-inset-bottom, 0px) + 118px);
   box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.45);
 }
 
@@ -756,7 +809,7 @@
   font-size: 12px;
   white-space: nowrap;
   pointer-events: none;
-  z-index: 5;
+  z-index: var(--fvp-z-playhead-bubble);
 }
 
 .tl__bubble-time {
@@ -939,7 +992,7 @@
 .recycle-root {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--fvp-z-recycle);
   pointer-events: none;
 }
 .recycle {
@@ -1017,4 +1070,9 @@
 .recycle__warn {
   margin: 0 0 8px;
   font-size: 12px;
+}
+/* v0.3.3 · 项3 补丁：恢复前确认框的**面板内挂载位**（见 recycle-view.ts / undo-confirm.ts）。
+   与下方列表之间留出间距；横幅本体沿用 .fvp-banner / --warn，不新增层级（无 z-index）。 */
+.recycle__sheet > .fvp-banner {
+  margin-bottom: 8px;
 }

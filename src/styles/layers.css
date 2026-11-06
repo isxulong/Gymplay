@@ -1,0 +1,46 @@
+/* v0.3.3 · 项2：全仓 z-index 层级登记表（唯一来源，X-10）。
+ *
+ * 纪律：本文件是层级数值的**唯一来源**；其他样式文件只允许写 `var(--fvp-z-*)`，
+ * 不得出现 `z-index:` + 数值字面量。新增层级必须先在此登记再使用。
+ *
+ * 登记表（数值取自 v0.3.2 基线，值不变、只改书写位置）：
+ *
+ *  | 层级 | 变量                          | 元素                              | 原位置           |
+ *  |------|-------------------------------|-----------------------------------|------------------|
+ *  | 3    | --fvp-z-playhead              | 播放头色块层                      | editor.css:321   |
+ *  | 5    | --fvp-z-playhead-bubble       | 播放头内部层（时间气泡）          | editor.css:759   |
+ *  | 30   | --fvp-z-notice-stack          | 普通信息通知栈（v0.3.2 原值）     | editor.css:136   |
+ *  | 40   | --fvp-z-detail-scrim          | 段详情遮罩                        | editor.css:433   |
+ *  | 45   | --fvp-z-detail-sheet          | 段详情面板                        | editor.css:447   |
+ *  | 50   | --fvp-z-cockpit-host          | 驾驶舱宿主（整屏背景）            | cockpit.css:17   |
+ *  | 52   | --fvp-z-notice-editor         | 编辑态通知（v0.3.3 新增）         | 新增             |
+ *  | 55   | --fvp-z-cockpit-panel         | 驾驶舱面板（底部抽屉）            | cockpit.css:150  |
+ *  | 58   | --fvp-z-dock                  | 贴底槽（撤销条，v0.3.3 新增）     | 新增             |
+ *  | 60   | --fvp-z-cockpit-hints         | 驾驶舱提示层（顶部安全区内）      | cockpit.css:41   |
+ *  | 60   | --fvp-z-recycle               | 回收站根容器                      | editor.css:942   |
+ *  | 1000 | --fvp-z-sw-toast              | Service Worker 通知条             | base.css:62      |
+ *
+ * 编辑态通知 52 的取值约束（判据 2-g / X-3）：必须**严格大于 45**（否则又被段详情
+ * 面板压住，正是 N-4 的形态）、**严格小于 60**（否则会浮在回收站全屏层之上，让
+ * 回收站里的操作无法点击）。取 52 的理由：高于驾驶舱宿主 50（保证模式切换期间
+ * 编辑态通知不被整屏宿主背景压没）、低于驾驶舱面板 55 与提示层 60（保证驾驶舱
+ * 自己的面板和提示层不被编辑态通知压住）。
+ *
+ * 30 的去向：v0.3.2 的 `.fvp-notice-stack` 原值 30 低于段详情面板 45，是 N-4 的
+ * 直接成因；v0.3.3 起该元素改用 52。30 保留登记，供回滚单元①单独回退使用
+ *（回滚时把 editor.css 中的 `--fvp-z-notice-editor` 换回 `--fvp-z-notice-stack` 即可）。
+ */
+:root {
+  --fvp-z-playhead: 3;
+  --fvp-z-playhead-bubble: 5;
+  --fvp-z-notice-stack: 30; /* v0.3.2 原值，保留供回滚 */
+  --fvp-z-detail-scrim: 40;
+  --fvp-z-detail-sheet: 45;
+  --fvp-z-cockpit-host: 50;
+  --fvp-z-notice-editor: 52;
+  --fvp-z-cockpit-panel: 55;
+  --fvp-z-dock: 58;
+  --fvp-z-cockpit-hints: 60;
+  --fvp-z-recycle: 60;
+  --fvp-z-sw-toast: 1000;
+}

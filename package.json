@@ -1,7 +1,7 @@
 {
   "name": "gymplay",
   "private": true,
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "健身视频分段变速播放器（Gymplay）——纯静态 PWA，本地文件分段变速跟练",
   "type": "module",
   "scripts": {

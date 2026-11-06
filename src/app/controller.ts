@@ -69,16 +69,23 @@ import {
   NOTICE_INFO_CAP,
 } from './notice-center';
 import {
-  markAllStale,
+  isEntryApplicable,
+  isEntryDamagedReason,
+  isUndoEntryOversized,
+  makeBreakRecord,
   markStaleFrom,
   pushUndoEntry,
   saveUndoStack,
-  undoGate,
+  undoCounts,
+  undoEntryBytes,
+  undoGateFor,
   UNDO_STORAGE_KEY,
+  type UndoBreakKind,
+  type UndoBreakRecord,
   type UndoEntry,
   type UndoKind,
 } from './undo-store';
-import type { AppState, NoticeKind } from './state';
+import type { AppState, Notice, NoticeKind } from './state';
 import type { Store } from './store';
 
 /** 文案 E（定稿 §1.2 / F8 AC5，>1s 偏差） */
@@ -98,6 +105,32 @@ export const COPY_KEY_RECEIVER_GUIDE =
 export const COPY_HEVC_PASSTHROUGH = '检测到 HEVC 编码视频，当前浏览器可直读，已直接装载。';
 
 const SNAPSHOT_INTERVAL_MS = 1000;
+
+/**
+ * v0.3.3 · 项3 · N-1：试听项在 sequence 中的原始下标（**禁止 −1 哨兵**）。
+ *
+ * 背景：`cfg.sequence.indexOf(seg.id)` 在「段已被移出队列」时返回 −1，而下游
+ * （`PlannedItem.sequenceIndex`，plan.ts L22 契约「在 sequence 中的原始下标」）
+ * 会把它当合法下标使用——试听一个已不勾选 / 已移出队列的段时出现非法值。
+ *
+ * 语义定案（方案 §2.3 第 7 条）：序号必须有定义，不得出现 −1。这里分两段：
+ * ① 段在 sequence 中 → 取真实下标（≥0，重复段据此区分）；
+ * ② 段不在 sequence 中（队列里没有它）→ 兜底取该段在 `cfg.segments` 中的下标（≥0，
+ *    段必然存在，否则调用方已提前 return）；该值属于「段列表下标空间」，与 ① 的下标空间
+ *    不同，调用方若需要区分语义请看 `queued` 标志，不要把两者当同一个坐标系比较。
+ *
+ * 纯函数、不抛异常：入参非法时也返回 ≥0 的值。
+ */
+export function resolveAuditionSequenceIndex(
+  cfg: PlayerConfig,
+  segId: string,
+): { sequenceIndex: number; queued: boolean } {
+  const seqIdx = cfg.sequence.indexOf(segId);
+  if (seqIdx >= 0) return { sequenceIndex: seqIdx, queued: true };
+  const segIdx = cfg.segments.findIndex((s) => s.id === segId);
+  // 段不在 segments 中（调用方已校验过存在，这里只作防御）：落到 0（有定义，非 −1）
+  return { sequenceIndex: segIdx >= 0 ? segIdx : 0, queued: false };
+}
 
 export interface QueueFrame {
   playing: boolean;
@@ -162,8 +195,17 @@ export interface EditorController {
   duplicateEntry(index: number): void;
   removeEntry(index: number): void;
   setLoopMode(mode: PlayerConfig['loop']['mode'], count?: number): void;
-  /** v0.3.2 · 项2+10：恢复一次删除（世界线栈门禁 + 截断回退），entryId = UndoEntry.id */
+  /**
+   * v0.3.2 · 项2+10 / v0.3.3 · 项3：恢复一次删除。
+   * 门禁判定对象是**被点击的条目**（不再比栈顶）：该条指纹与当前一致 → 直接恢复；
+   * 不一致 → 落到 `state.undoConfirm` 走恢复前显式确认，确认后把被覆盖的当前配置
+   * 存成一条反向记录（可再撤回）。entryId = UndoEntry.id
+   */
   undoDelete(entryId: number): void;
+  /** v0.3.3 · 项3：确认「会一并回退其它改动」的恢复（消费 state.undoConfirm） */
+  confirmUndo(): void;
+  /** v0.3.3 · 项3：取消恢复前确认（不清栈、不改配置） */
+  cancelUndo(): void;
   /** v0.3.2 · 项2+10：关闭撤销横幅（栈保留，回收站仍可恢复） */
   dismissUndo(): void;
   /** v0.3.2 · 项2+10：打开 / 关闭回收站弹层 */
@@ -388,6 +430,133 @@ export function createEditorController(opts: {
     },
   });
 
+  /**
+   * v0.3.3 · 项2：通知计时的**按视图配对计数**（2-d / 2-e）。
+   *
+   * 为什么在 controller 侧做配对、而不依赖 notice-center 的 pauseAll/resumeAll：
+   * 本批次硬边界是「不改 notice-center.ts」（归高级开发）。而方案 §2.2 第 4 条要求的
+   * 「带配对计数」正是为「详情面板与回收站同时打开、关一层不得误解另一层的计时」。
+   * 因此在 controller 侧用**视图键集合**实现配对：进入视图 → 加入集合；集合从空变非空
+   * 时真正 pauseAll 一次；离开视图 → 从集合移除；集合变空时真正 resumeAll 一次。
+   * 同一视图重复进入 / 重复离开都是幂等的（Set 去重）——这是「不漏、不重」的实现口径：
+   * **真正调用 pauseAll/resumeAll 的次数恒为「集合 0↔非0 的跃迁次数」**，不是调用方次数。
+   *
+   * 视图键：
+   * - `'detail'`：段详情面板（selectedSegmentId 非 null）；
+   * - `'recycle'`：回收站弹层（recycleOpen）；
+   * - `'cockpit'`：驾驶舱（mode==='cockpit'）——**只暂停，不确认**（见 enterCockpit 注释）。
+   */
+  const pausedViews = new Set<'detail' | 'recycle' | 'cockpit' | 'hover'>();
+  /** 暂停期间到达的通知：恢复计时时才登记（避免「遮挡期到达的信息」一开始就扣时长）。 */
+  const deferredNotices = new Map<number, Notice>();
+  let noticesPaused = false;
+  /**
+   * v0.3.3 · 项3：上次落盘副本被丢弃的条数（0 = 完整落盘）。
+   * 只在**丢弃量继续变大**时提示：配额不足是持续状态，每次入栈都提示会把通知区刷满；
+   * 而丢弃量不变说明损伤没有加深，不必重复打扰。提示里的条数因此始终是当前真实值。
+   */
+  let undoDroppedNotified = 0;
+
+  /**
+   * 视图暂停/恢复的唯一入口（幂等）。`on` = 该视图此刻是否处于「应当暂停计时」的状态。
+   *
+   * 断点差异（≥960px）的处理见 `syncViewNoticePauseForViewport`：桌面端 detail-sheet 是
+   * 静态侧栏（position: static，不遮挡通知区），**「遮挡」语义在两种断点下不同**，
+   * 因此桌面端不为 detail 视图加暂停项（详见该函数注释）。
+   */
+  function setViewNoticePause(view: 'detail' | 'recycle' | 'cockpit' | 'hover', on: boolean): void {
+    const had = pausedViews.has(view);
+    if (on === had) return;
+    if (on) pausedViews.add(view);
+    else pausedViews.delete(view);
+    const shouldPause = pausedViews.size > 0;
+    if (shouldPause === noticesPaused) return;
+    noticesPaused = shouldPause;
+    if (shouldPause) {
+      noticeCenter.pauseAll();
+      return;
+    }
+    noticeCenter.resumeAll();
+    // 暂停期到达的通知此刻才登记计时（信息不因「被遮挡」而少扣时间）
+    for (const n of deferredNotices.values()) noticeCenter.track(n);
+    deferredNotices.clear();
+  }
+
+  /** 当前断点是否 ≥960px（桌面：detail-sheet 为静态侧栏、不遮挡）。 */
+  function isDesktopViewport(): boolean {
+    try {
+      return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia('(min-width: 960px)').matches
+        : false;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * v0.3.3 · 项2：把「详情面板开合」同步进暂停集合，并按断点区分「遮挡」语义。
+   *
+   * - **<960px（浮层）**：detail-sheet 是 position: fixed 底部弹层 + scrim，**真的遮挡**
+   *   通知区（层级 45 压在通知栈之上）→ 开 = 暂停计时。
+   * - **≥960px（静态侧栏）**：detail-sheet 是 position: static 的右栏（CSS `editor.css`
+   *   的 `@media (min-width:960px)` 段），与通知区**并列、不重叠**，不存在遮挡 →
+   *   **不因开合而暂停/恢复计时**（若照搬浮层语义，会让桌面端「打开右栏 = 通知计时凭空停住」，
+   *   关掉右栏才继续走，等于制造了一个不该有的暂停源）。
+   *
+   * 判据 2-d 的口径是「弹层遮挡不计时」——它测的是**遮挡**，因此严格按断点分别成立：
+   * 2-d / 2-e 的实测在非桌面断点下进行（测试桩 `isDesktopViewport()` 恒 false）；
+   * 桌面端「开合不暂停」由 tests/unit/app/notice-wiring.test.ts 的独立用例断言。
+   */
+  function syncDetailViewNoticePause(): void {
+    const open = store.get().selectedSegmentId !== null;
+    setViewNoticePause('detail', open && !isDesktopViewport());
+  }
+
+  /** 视图状态变化的统一同步点（所有会改 selectedSegmentId / recycleOpen / mode 的路径都调它）。 */
+  function syncViewNoticePause(): void {
+    const st = store.get();
+    setViewNoticePause('recycle', st.recycleOpen);
+    // 驾驶舱：只暂停不确认（见 enterCockpit）——进入即暂停，退出即恢复，全程不判「已读」
+    setViewNoticePause('cockpit', st.mode === 'cockpit');
+    syncDetailViewNoticePause();
+  }
+
+  /**
+   * 视图快照 + store 订阅：**所有**会改这三个字段的路径（含删除后自动收起详情、
+   * 应用/丢弃草稿、导入视频清选中）都被同一条 diff 覆盖，避免逐个调用点漏接。
+   *
+   * 「不漏」的含义：任何一次视图开合都会经过这里；「不重」的含义：同一状态不重复触发
+   * （diff 相同即 return），且真正 pauseAll/resumeAll 的次数由 setViewNoticePause 的
+   * 集合跃迁去重，恒等于 0↔非0 跃迁次数。
+   */
+  let viewSnapshot = {
+    sel: store.get().selectedSegmentId,
+    recycle: store.get().recycleOpen,
+    mode: store.get().mode,
+  };
+  function syncViewNoticePauseFromState(): void {
+    const st = store.get();
+    if (
+      st.selectedSegmentId === viewSnapshot.sel &&
+      st.recycleOpen === viewSnapshot.recycle &&
+      st.mode === viewSnapshot.mode
+    ) {
+      return;
+    }
+    viewSnapshot = { sel: st.selectedSegmentId, recycle: st.recycleOpen, mode: st.mode };
+    syncViewNoticePause();
+  }
+  const unsubscribeViewPause = store.subscribe(syncViewNoticePauseFromState);
+
+  /**
+   * 断点跨越（<960 ↔ ≥960）会改变 detail-sheet 的「遮挡」语义，需要重算。
+   * 只在有 addEventListener 的环境挂（Node 测试桩与老 WebView 都可缺席）。
+   */
+  const onViewportChange = (): void => syncViewNoticePause();
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('resize', onViewportChange);
+  }
+
   function notify(kind: NoticeKind, text: string): void {
     const notice = makeNotice(kind, text);
     const current = store.get().notices;
@@ -399,6 +568,14 @@ export function createEditorController(opts: {
     }
     store.update({ notices: [...current, notice] });
     for (const id of evict) controller.dismissNotice(id);
+    if (noticesPaused) {
+      // v0.3.3 · 项2（2-d / 2-e 的成立条件）：暂停期间到达的通知**不启动计时**。
+      // 说明：这一条在方案 §2.2 第 3 条里归 notice-center 的 track()（该项归高级开发）；
+      // 那一侧落地前，先在本层用「延后登记、恢复时统一补启」实现同等语义——
+      // 本文件不改 notice-center.ts，故不改 track 本体。两侧都落地时，这里退化为冗余（无害）。
+      deferredNotices.set(notice.id, notice);
+      return;
+    }
     noticeCenter.track(notice);
   }
 
@@ -433,29 +610,99 @@ export function createEditorController(opts: {
 
   /**
    * 撤销栈同步（规则 5）：storageDegraded ‖ 草稿态 → 仅内存不落盘；
-   * 写入失败（QuotaExceeded 丢最旧重试后仍失败）→ 降级会话内内存历史，
+   * 写入失败（连「只留最新一条」都写不进）→ 降级会话内内存历史，
    * 经既有 storageDegraded 通道联动文案 F。
+   *
+   * v0.3.3 · 项3：同步写入计数两字段（undoTotal / undoRecoverable），UI 侧可见性判定
+   * 直接读它们，不再自己 filter（避免口径漂移）。
+   *
+   * v0.3.3 · 项3 · 配额降容回报：`saveUndoStack` 在配额不足时会**渐进丢弃最旧条目**并回报
+   * `dropped`。这里必须把它翻译成用户可见提示——旧实现 `ok:true` 不报丢弃条数，
+   * 面板看着「历史还在」而落盘只剩 1 条，正是项3 要消除的静默丢历史。
+   * 会话内 `undoStack` 保持完整（被丢的是**持久化副本**，本次会话仍可恢复），
+   * 故提示里写明「仅本次会话内仍可恢复」，不误导成「已经彻底没了」。
    */
   function syncUndoStack(entries: UndoEntry[], bannerVisible: boolean): void {
     const st = store.get();
-    store.update({ undoStack: entries, undoBannerVisible: bannerVisible });
+    const counts = undoCounts(entries);
+    store.update({
+      undoStack: entries,
+      undoBannerVisible: bannerVisible,
+      undoTotal: counts.total,
+      undoRecoverable: counts.recoverable,
+    });
     if (st.storageDegraded || st.pendingKeyConfig !== null) return;
-    const saved = saveUndoStack(entries);
-    if (!saved.ok) store.update({ storageDegraded: true });
+    const saved = saveUndoStack(entries, undefined, st.undoBreak);
+    if (!saved.ok) {
+      store.update({ storageDegraded: true });
+      return;
+    }
+    if (saved.dropped > 0) {
+      store.update({
+        undoBreak: makeBreakRecord(
+          'capacity',
+          `本地存储空间不足，最旧的 ${saved.dropped} 条撤销历史未能落盘`,
+          saved.dropped,
+        ),
+      });
+      if (saved.dropped > undoDroppedNotified) {
+        undoDroppedNotified = saved.dropped;
+        notify(
+          'warn',
+          `撤销历史空间不足，已丢弃最旧的 ${saved.dropped} 条（仅本次会话内仍可恢复，刷新后将不再保留）。`,
+        );
+      }
+    } else {
+      // 整栈完整落盘：损伤已解除，重置计数——否则「丢 2 条 → 历史被清空后重新开始 → 又丢 2 条」
+      // 这条路径会因计数仍停在 2 而不再提示。
+      undoDroppedNotified = 0;
+    }
   }
 
-  /** 清栈（世界线断裂即重启；同步移除横幅，规则 2 / UI 节）。 */
-  function clearUndoHistory(): void {
+  /**
+   * 清栈（v0.3.3 · 项3 三分类，判据 3-d / 3-e）。
+   *
+   * - `total`（总闸）：换视频 / 换源 / 换整份配置——旧记录全部无意义，直接清。
+   * - `broken`（真断裂）：当前配置与栈顶之间存在不可自动合并的分歧——**仍清栈**，但写入
+   *   一条 `undoBreak` 痕迹（用户可见「为什么历史没了」，不再静默），并落进存储载体。
+   * - `capacity`（容量）：单条超限或配额写满导致的截断——同样留痕迹。
+   *
+   * 会话内呈现层（点到失效条目）**不再走这里**：那是「置灰不清栈」（见 undoDelete）。
+   *
+   * @param kind 分类；不传则按 `total` 处理（保持旧调用点的默认语义不变）
+   * @param reason 可读原因（写进痕迹；total 也记，便于追溯）
+   */
+  function clearUndoHistory(kind: UndoBreakKind = 'total', reason = '配置世界线已整体替换'): void {
     const st = store.get();
-    if (st.undoStack.length === 0 && !st.undoBannerVisible && !st.recycleOpen) return;
-    store.update({ undoStack: [], undoBannerVisible: false, recycleOpen: false });
+    const dropped = st.undoStack.length;
+    const hasTrace = kind !== 'total';
+    // 幂等：本来就没有历史、也没有需要保留的痕迹时不做任何事
+    if (dropped === 0 && !st.undoBannerVisible && !st.recycleOpen && !hasTrace) return;
+    const breakRecord: UndoBreakRecord | null = hasTrace
+      ? makeBreakRecord(kind, reason, dropped)
+      : null;
+    store.update({
+      undoStack: [],
+      undoTotal: 0,
+      undoRecoverable: 0,
+      undoBannerVisible: false,
+      recycleOpen: false,
+      undoConfirm: null,
+      undoBreak: breakRecord,
+    });
     if (!st.storageDegraded && st.pendingKeyConfig === null) {
       try {
-        window.localStorage.removeItem(UNDO_STORAGE_KEY);
+        if (breakRecord) {
+          // 痕迹随空栈一起落盘（旧代码读到时只认 entries，忽略 lastBreak——3-i）
+          saveUndoStack([], undefined, breakRecord);
+        } else {
+          window.localStorage.removeItem(UNDO_STORAGE_KEY);
+        }
       } catch {
         /* 存储不可用：栈已仅存内存，无需处理 */
       }
     }
+    if (breakRecord) notify('info', `撤销历史已清空（${reason}）。`);
   }
 
   /** 栈内自增序号（跨会话恢复后从 max+1 续起，保证栈内唯一）。 */
@@ -465,10 +712,28 @@ export function createEditorController(opts: {
     return max + 1;
   }
 
+  /** 解析并校验一条撤销记录的 pre（失败返回 null；调用方已用 isEntryApplicable 给过原因）。 */
+  function parseEntryConfig(entry: UndoEntry): PlayerConfig | null {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(entry.pre);
+    } catch {
+      return null;
+    }
+    const res = validate(parsed);
+    return res.ok ? res.value : null;
+  }
+
+  /** 该条之后还有多少条「可恢复」的删除记录会被本次恢复一并回退（确认文案用）。 */
+  function countSuperseded(entries: UndoEntry[], fromIndex: number): number {
+    return entries.slice(fromIndex + 1).filter((e) => !e.stale && e.kind !== 'restore').length;
+  }
+
   /**
    * 包装层（规则 2，BA-F-9 / AB-P1-4）：全部编辑提交统一入口，不改 commitEdit 本体。
    * kind 映射：'delete-segment' / 'remove-entry' → 入栈；'restore' → 恢复记录（undoDelete 专用，
-   * 附截断上下文）；'none' → 清栈（调速 / 改名 / 边界 / 队列顺序 / 循环等世界线断裂编辑）。
+   * 附截断上下文）；'none' → **不入栈也不清栈**（v0.3.3 · 项3：调速 / 改名 / 边界 / 队列顺序 /
+   * 循环等编辑不再清空历史，栈的连续性由 pushUndoEntry 的 chainBroken 标记承载）。
    * CI 静态断言（scripts/gate-undo.mjs）：controller.ts 中裸 commitEdit 调用数 == 0。
    */
   function commitEditTracked(
@@ -476,13 +741,14 @@ export function createEditorController(opts: {
     segLabel: string,
     res: EditResult,
     preCanonical: string | null,
-    restoreContext?: { truncateFrom: number; truncatedCount: number; targetPost: string },
+    restoreContext?: { truncateFrom: number; truncatedCount: number; targetPost: string; reversePre?: string },
   ): boolean {
     const ok = commitEdit(res); // gate-undo: 包装层内部唯一合法调用点
     if (!ok || !res.ok) return false;
     const st = store.get();
     if (kind === 'none') {
-      clearUndoHistory();
+      // 项3（判据 3-c）：非删除编辑**不清栈**。旧行为是 clearUndoHistory()，
+      // 使「删一段 → 改个速率」把整条历史抹掉；这里保留历史，栈顶世界线由逐条门禁负责。
       return true;
     }
     if (kind === 'restore' && restoreContext && preCanonical !== null) {
@@ -497,7 +763,22 @@ export function createEditorController(opts: {
         pre: preCanonical,
         post: restoreContext.targetPost,
       };
-      syncUndoStack(pushUndoEntry(truncated, record), false);
+      let next = pushUndoEntry(truncated, record);
+      // 项3（方案 §2.3 第 4 条）：把被覆盖的那份当前配置存成一条**反向记录**，
+      // 把「恢复导致的数据丢失」降级为「可再撤回」。反向记录紧跟恢复记录之后。
+      if (restoreContext.reversePre !== undefined) {
+        const reverse: UndoEntry = {
+          id: nextUndoId(next),
+          createdAt: Date.now(),
+          kind: 'restore',
+          segLabel,
+          pre: restoreContext.reversePre,
+          post: restoreContext.targetPost,
+          reverse: true,
+        };
+        next = pushUndoEntry(next, reverse);
+      }
+      syncUndoStack(next, false);
       const n = restoreContext.truncatedCount;
       notify(
         'info',
@@ -507,7 +788,7 @@ export function createEditorController(opts: {
       );
       return true;
     }
-    // 删除类（规则 1）：pre === top.post 链式追加；失配清栈重启（fail-fast）
+    // 删除类（规则 1）：pre === top.post 链式追加；不连续 → 追加并标 chainBroken（不清栈）
     if (preCanonical === null) return true;
     const entry: UndoEntry = {
       id: nextUndoId(st.undoStack),
@@ -517,6 +798,18 @@ export function createEditorController(opts: {
       pre: preCanonical,
       post: canonicalize(res.value),
     };
+    // 项3 · 容量护栏（架构师实测：300 段配置下 label 20/30 字的条目超 64KB，旧行为把整栈塌成 1 条）：
+    // 超限条目**不入栈**，原栈原样保留 + 明确提示；绝不丢弃既有历史。
+    if (isUndoEntryOversized(entry)) {
+      store.update({
+        undoBreak: makeBreakRecord('capacity', `单条记录 ${undoEntryBytes(entry)} 字节，超过 64KB 上限`, 0),
+      });
+      notify(
+        'warn',
+        `这次删除的历史记录过大（单条 ${undoEntryBytes(entry)} 字节，超过 64KB 上限），未能保存为可撤销项；之前的撤销历史仍然保留。`,
+      );
+      return true;
+    }
     syncUndoStack(pushUndoEntry(st.undoStack, entry), true);
     return true;
   }
@@ -652,6 +945,7 @@ export function createEditorController(opts: {
     // 互斥：任一起播前先停对方（audit plan 不与队列调度器并存）
     if (scheduler) stopQueueInternal();
     if (auditScheduler) exitAudit('restart');
+    const seq = resolveAuditionSequenceIndex(cfg, seg.id);
     const plan: PlayPlan = {
       items: [{
         segmentId: seg.id,
@@ -659,8 +953,8 @@ export function createEditorController(opts: {
         start: seg.start,
         end: seg.end,
         rate: seg.rate,
-        // BA-F-12 / G-3：真实下标，禁用 -1 哨兵（与 plan.ts L22「sequence 原始下标」契约一致，防御性）
-        sequenceIndex: cfg.sequence.indexOf(seg.id),
+        // BA-F-12 / G-3 / N-1：真实下标，禁用 -1 哨兵（段不在队列时取段列表下标作为有定义兜底）
+        sequenceIndex: seq.sequenceIndex,
       }],
       // loop off：单段播完即 onFinish（矩阵 #10 自然结束；segment 模式会无限循环）
       loop: { mode: 'off', count: 0 },
@@ -761,9 +1055,13 @@ export function createEditorController(opts: {
       selectedSegmentId: null,
       shareLink: null,
     });
-    // 项2：视频重新配对触发边界钳制（alignConfigToVideo 实际改变配置）→ 世界线断裂，清栈；
-    // 无变化（同名同时长重装，reload 场景）不清——栈顶世界线门禁（规则 3）兜底其余失配
-    if (worldLineBroken) clearUndoHistory();
+    // 项2 / 项3 · 三分类「真断裂」：换视频后 alignConfigToVideo 实际改动了配置（含边界钳制），
+    // 当前配置与栈顶记录之间已不可自动合并 → **仍清栈**，但写入 undoBreak 痕迹（判据 3-d）。
+    // ⚠ 判据 3-e：本行**必须保持条件形态**——改成无条件会让「每次切视频都清空历史」，
+    // 把 N-3 从「调速清栈」扩大成「切视频也清栈」。
+    // （方案原文题为「第 766 行」；批次 2 新增代码后本行位移至下方，形态与语义未变。判据 3-e
+    //   要求本行保持条件形态，静态形态断言未随本次改动新增独立用例——此处不虚指测试文件。）
+    if (worldLineBroken) clearUndoHistory('broken', '换视频后段边界被钳制，当前编排与历史记录无法自动衔接');
     if (loaded.hint === 'hevc-passthrough') notify('info', COPY_HEVC_PASSTHROUGH);
     emitFrame();
   }
@@ -797,8 +1095,9 @@ export function createEditorController(opts: {
       notify('info', '这份配置与当前内容一致，无需导入。');
       return;
     }
-    // 项2：导入 = 世界线断裂（无论走草稿还是直接生效）→ 清栈
-    clearUndoHistory();
+    // 项3 · 三分类「真断裂」：导入一份外部编排 = 当前世界线被外部内容替换，
+    // 旧记录指向的配置与再导入内容之间没有可合并的路径 → 仍清栈，留痕迹（判据 3-d）。
+    clearUndoHistory('broken', '导入了另一份编排，历史记录与导入内容无法衔接');
     if (st.config !== null) {
       // F7 AC3：本地有配置 → 草稿态挂起，不写本地存储
       store.update({ pendingKeyConfig: cfg });
@@ -850,9 +1149,9 @@ export function createEditorController(opts: {
       });
       persistence.clear();
       writeKeyToLocation(null);
-      // 项2（D-4 细则否决）：换视频清空整表 = 世界线断裂重启 → 清栈（不入栈：undo 快照
-      // 只存配置不存媒体，恢复将产生「段边界指向另一部视频」的悬空配置）
-      clearUndoHistory();
+      // 项3 · 三分类「总闸」：确认换视频 → 整份配置清空重建，旧记录全部无意义，直接清
+      //（不入栈：undo 快照只存配置不存媒体，恢复会产出「段边界指向另一部视频」的悬空配置）
+      clearUndoHistory('total', '已导入新视频，旧编排与历史记录整体作废');
       await doImport(file);
     },
 
@@ -1024,49 +1323,154 @@ export function createEditorController(opts: {
       commitEditTracked('none', '', setLoop(mustConfig(), mode, count), null);
     },
 
+    /**
+     * v0.3.3 · 项3：逐条恢复（门禁判定对象 = 被点击条目）。
+     *
+     * 三条分支：
+     * ① 条目自身损坏（JSON 坏 / 校验不过）→ **只置灰该条**（stale + invalidReason），
+     *    不再整栈清空（旧行为是 clearUndoHistory，把「一条坏了」放大成「全部历史消失」）。
+     * ② 该条 post === 当前 canonical → 世界线末端，直接恢复。
+     * ③ 不一致 → 写明「删除之后你还改过 N 处」写入 `undoConfirm`，等 confirmUndo() 再提交；
+     *    被覆盖的当前配置作为反向记录的 pre 一并带下去。判据 3-a / 3-b 走这条。
+     */
     undoDelete(entryId: number): void {
       const st = store.get();
       const stack = st.undoStack;
       const idx = stack.findIndex((e) => e.id === entryId && !e.stale && e.kind !== 'restore');
       if (idx < 0) return;
+      const entry = stack[idx];
       const cfg = activeConfig();
       if (!cfg) return;
       const currentCanonical = canonicalize(cfg);
-      // 规则 3：栈顶世界线门禁——失配 → 会话内置灰不清栈 + warn（呈现层），跨会话层由 bootstrap 整栈丢弃
-      if (!undoGate(stack, currentCanonical)) {
-        syncUndoStack(markAllStale(stack), false);
-        notify('warn', '当前编排已变化，历史记录已失效');
+
+      // ① 适用性（纯函数，不抛异常）：分两类处理——
+      //    「记录自身损坏」（JSON 坏 / 校验不过 / id 重复）→ 按条置灰，恢复必然失败；
+      //    「与当前配置冲突」（区间越界 / id 被复用）→ **不置灰**，走恢复前确认：
+      //    用户在确认后仍应能恢复，不能因为再判一次就把它置灰（否则 3-b 场景恢复不了）。
+      const verdict = isEntryApplicable(entry, cfg);
+      if (!verdict.ok && isEntryDamagedReason(verdict.reason)) {
+        syncUndoStack(
+          stack.map((e) => (e.id === entry.id ? { ...e, stale: true, invalidReason: verdict.message } : e)),
+          st.undoBannerVisible,
+        );
+        notify('warn', `${verdict.message}，该条历史已置灰。`);
+        return;
+      }
+      if (!verdict.ok) {
+        // 与当前配置冲突（id 被复用 / 区间越界）：不是记录坏了，是「此刻恢复会覆盖别人」——
+        // 仍允许用户在确认后恢复，故不置灰，只在确认文案里说明。
+        // targetPost 这里必须算出来（confirmUndo 不再重算），否则确认后恢复没有目标世界线。
+        const conflictCfg = parseEntryConfig(entry);
+        store.update({
+          undoConfirm: {
+            entryId: entry.id,
+            segLabel: entry.segLabel,
+            superseded: countSuperseded(stack, idx),
+            message: `${verdict.message}。恢复会一并回退 ${countSuperseded(stack, idx)} 处改动；被覆盖的当前编排会存成一条反向记录，可再撤回。`,
+            overwritten: currentCanonical,
+            targetPost: conflictCfg ? canonicalize(conflictCfg) : '',
+            truncateFrom: idx,
+          },
+        });
+        return;
+      }
+
+      const targetCfg = parseEntryConfig(entry);
+      if (!targetCfg) {
+        // 适用性刚已通过，这里只作防御（理论上不可达）
+        store.update({ undoConfirm: null });
+        return;
+      }
+      const targetPost = canonicalize(targetCfg);
+      // ② 世界线末端（该条之后无改动）
+      if (undoGateFor(entry, currentCanonical)) {
+        stopIfPlayingBeforeEdit();
+        const truncatedCount = stack.slice(idx).filter((e) => !e.stale).length;
+        if (targetPost === currentCanonical) {
+          // 恢复目标与现状一致：只置灰不重放提交
+          syncUndoStack(markStaleFrom(stack, idx), false);
+          return;
+        }
+        commitEditTracked('restore', entry.segLabel, { ok: true, value: targetCfg }, currentCanonical, {
+          truncateFrom: idx,
+          truncatedCount,
+          targetPost,
+        });
+        return;
+      }
+      // ③ 不是当前世界线末端：恢复前显式确认 + 被覆盖配置存成反向记录
+      store.update({
+        undoConfirm: {
+          entryId: entry.id,
+          segLabel: entry.segLabel,
+          superseded: countSuperseded(stack, idx),
+          message: `这条记录之后还有 ${countSuperseded(stack, idx)} 处改动，恢复会一并回退；被覆盖的当前编排会存成一条反向记录，可再撤回。`,
+          overwritten: currentCanonical,
+          targetPost,
+          truncateFrom: idx,
+        },
+      });
+    },
+
+    /** v0.3.3 · 项3：确认恢复（唯一真正提交恢复的路径之一，另一条是「末端直接恢复」）。 */
+    confirmUndo(): void {
+      const st = store.get();
+      const prompt = st.undoConfirm;
+      if (!prompt) return;
+      const stack = st.undoStack;
+      const idx = stack.findIndex((e) => e.id === prompt.entryId);
+      if (idx < 0) {
+        store.update({ undoConfirm: null });
         return;
       }
       const entry = stack[idx];
-      // 规则 4：恢复也是编辑——编辑即停 + validate(entry.pre) 后经包装层走既有 commitEdit
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(entry.pre);
-      } catch {
-        clearUndoHistory();
+      const cfg = activeConfig();
+      if (!cfg) {
+        store.update({ undoConfirm: null });
+        return;
+      }
+      const currentCanonical = canonicalize(cfg);
+      const verdict = isEntryApplicable(entry, cfg);
+      if (!verdict.ok && isEntryDamagedReason(verdict.reason)) {
+        // 只有「记录自身损坏」才置灰（恢复必然失败）；冲突类（区间越界 / id 被复用）
+        // 已在 undoDelete 时告知过用户，且用户已确认「会一并回退」→ 继续往下恢复。
+        store.update({
+          undoConfirm: null,
+          undoStack: stack.map((e) => (e.id === entry.id ? { ...e, stale: true, invalidReason: verdict.message } : e)),
+        });
+        notify('warn', `${verdict.message}，该条历史已置灰。`);
+        return;
+      }
+      const parsed = parseEntryConfig(entry);
+      if (!parsed) {
+        store.update({
+          undoConfirm: null,
+          undoStack: stack.map((e) => (e.id === entry.id ? { ...e, stale: true, invalidReason: '撤销记录已损坏' } : e)),
+        });
         notify('warn', '历史记录已损坏，无法恢复');
         return;
       }
-      const res = validate(parsed);
-      if (!res.ok) {
-        clearUndoHistory();
-        notify('warn', '历史记录已损坏，无法恢复');
-        return;
-      }
+      const targetPost = canonicalize(parsed);
       stopIfPlayingBeforeEdit();
+      store.update({ undoConfirm: null });
       const truncatedCount = stack.slice(idx).filter((e) => !e.stale).length;
-      const targetPost = canonicalize(res.value);
       if (targetPost === currentCanonical) {
-        // 恢复目标与现状一致（如恢复记录回放）：只置灰不重放提交
         syncUndoStack(markStaleFrom(stack, idx), false);
         return;
       }
-      commitEditTracked('restore', entry.segLabel, res, currentCanonical, {
+      // 反向记录的 pre = 被覆盖的当前配置（prompt.overwritten），post = 目标
+      commitEditTracked('restore', entry.segLabel, { ok: true, value: parsed }, currentCanonical, {
         truncateFrom: idx,
         truncatedCount,
         targetPost,
+        reversePre: prompt.overwritten,
       });
+    },
+
+    /** v0.3.3 · 项3：取消恢复前确认——不清栈、不改配置，只解除提示。 */
+    cancelUndo(): void {
+      if (!store.get().undoConfirm) return;
+      store.update({ undoConfirm: null });
     },
 
     dismissUndo(): void {
@@ -1257,8 +1661,8 @@ export function createEditorController(opts: {
       });
       persistence.saveNow(next);
       writeKeyToLocation(null);
-      // 项2：草稿转正 = 世界线切换 → 清栈（草稿期栈本就仅内存）
-      clearUndoHistory();
+      // 项3 · 三分类「总闸」：草稿转正 = 世界线整体切换（新编排成为新的基准）→ 直接清
+      clearUndoHistory('total', '草稿已转正，撤销历史随世界线切换作废');
       notify('info', '已应用分享编排并保存到本机。');
     },
 
@@ -1266,8 +1670,9 @@ export function createEditorController(opts: {
       if (!store.get().pendingKeyConfig) return;
       store.update({ pendingKeyConfig: null, selectedSegmentId: null });
       writeKeyToLocation(null);
-      // 项2：丢弃草稿回到本地编排 → 清栈
-      clearUndoHistory();
+      // 项3 · 三分类「真断裂」：丢弃草稿 → 回到本地编排，两者不是同一世界线的两段
+      //（栈里若有本地编排期的记录，无法自动衔接到「丢弃后回到的旧编排」）→ 仍清，留痕迹
+      clearUndoHistory('broken', '已丢弃分享草稿，回到本地编排，历史记录无法衔接');
       notify('info', '已保留本地编排，分享的草稿已丢弃。');
     },
 
@@ -1279,11 +1684,13 @@ export function createEditorController(opts: {
     },
 
     pauseNoticeTimers(): void {
-      noticeCenter.pauseAll();
+      // v0.3.3 · 项2：hover/focus 也走同一配对集合（键 'hover'）——与详情/回收站/驾驶舱
+      // 叠加时不会互相误解对方。UI 侧调用点不变（editor.ts:357-366 归高级开发，不改）。
+      setViewNoticePause('hover', true);
     },
 
     resumeNoticeTimers(): void {
-      noticeCenter.resumeAll();
+      setViewNoticePause('hover', false);
     },
 
     setVolume(volume: number): void {
@@ -1309,8 +1716,12 @@ export function createEditorController(opts: {
     destroy(): void {
       noticeCenter.destroy();
       stopQueueInternal();
+      unsubscribeViewPause();
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('pagehide', onPageHide);
+      if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+        window.removeEventListener('resize', onViewportChange);
+      }
       frameCbs.clear();
       unbindMediaSession();
       wakeLock.destroy();
