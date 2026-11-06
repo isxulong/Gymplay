@@ -12,11 +12,11 @@
  * 构建占位符（BUILD_ID 与预缓存清单声明）由 scripts/build-sw.mjs
  * 在 vite build 后写入 dist/sw.js（release 链路无需人工改本文件换版本号）。
  */
-const BUILD_ID = '20261104141229-v0.3.2'; // <UTC时间戳14位>-v<package.json版本>，如 20261103093000-v0.2.0
+const BUILD_ID = '20261106144945-v0.3.3'; // <UTC时间戳14位>-v<package.json版本>，如 20261103093000-v0.2.0
 const CACHE_NAME = `gymplay-shell-${BUILD_ID}`;
 const CACHE_PREFIX = 'gymplay-shell-';
 const KEEP_CACHES = 2; // 当前 + 上一代共存，更老的懒删
-const SHELL_ASSETS = ["./","./index.html","./assets/index-3JwpzC5M.css","./assets/index-C4Z-qy-9.js","./icons/icon-192.png","./icons/icon-512.png","./manifest.webmanifest"]; // 全量 app shell 预缓存清单（构建时生成）
+const SHELL_ASSETS = ["./","./index.html","./assets/index-Bj0Lw0tf.js","./assets/index-nLkps7dJ.css","./icons/icon-192.png","./icons/icon-512.png","./manifest.webmanifest"]; // 全量 app shell 预缓存清单（构建时生成）
 
 self.addEventListener('install', (event) => {
   // 全量预缓存成功才 skipWaiting；失败则 install 整体 reject，新 SW 不激活
