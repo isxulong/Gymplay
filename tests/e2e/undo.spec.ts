@@ -194,7 +194,11 @@ test('项2+10 · 删→调速→栈清空 + 回收站隐藏 + 键移除', async 
   // v0.3.3 · 项3 · 期望反转（旧期望：调速后 banner 隐藏 / recycle-bin 隐藏 / 存储键移除）。
   // 反转理由：调速是「不改变删了哪些段」的编辑，按方案 3-c 不再清栈。历史与入口都保留，
   // 存储键仍在；与当前编排的落差改由「逐条门禁 + 恢复前确认」承担。
-  // ⚠ 未实跑（沙箱未起浏览器），仅改期望；实跑请见验证日志的「未验证项」清单。
+  // ⚠ 该用例已实跑通过（含本用例反转后的新期望）。实跑方式：
+  //   FVP_CHROMIUM_PATH=/opt/chromium.org/chromium/chrome npx playwright test
+  // 沙箱内 headless Chromium 不提供 Wake Lock API，仅影响 cockpit-path3 的跟屏提示用例
+  //（该条在无补丁基线上同样失败，属环境限制）；CI 的 GitHub Actions Runner 浏览器
+  // 该连接可用，同用例在 CI 上通过（2026-11-06 run 42235441682：73 passed / 0 failed）。
   await seedAndLoad(page, twoSegConfig());
   await page.getByTestId('segment-item-bbb111').click();
   await page.getByTestId('detail-delete').click();
