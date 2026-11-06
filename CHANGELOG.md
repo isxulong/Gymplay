@@ -5,41 +5,48 @@
 
 ## [0.3.3] - 2026-11-06
 
-v0.3.3 缺陷修复版本（App 版本 0.3.2 → 0.3.3；配置协议版本 Schema v1 不变；撤销栈条目版本 `v===1` 硬校验不动，故版本号不升）。
-
-修复 4 项用户可见缺陷与 2 项质量缺陷。
+v0.3.3 修复补丁（App 版本 0.3.2 → 0.3.3；配置协议版本 Schema v1 **不变**；配置密钥编解码语义不动——key-compat 对基线 `a5abbdf` 固定样例逐字节一致）。只交一份全量补丁，**不支持按批次独立 revert**（详见本节末「版本与验证」）。升 patch 的依据：本次含用户可见行为变化（调速不再清空撤销栈、回收站入口可见性），且离线缓存的 `BUILD_ID` 由 `scripts/build-sw.mjs` 直接取 `package.json` 的 version——不升版本会让新旧产物 BUILD_ID 相同，缓存的版本区分失效。
 
 ### 试听序号落位（N-1）
 
-- `resolveAuditionSequenceIndex` 改为返回 `{ sequenceIndex, queued }` 双字段：命中队列返回真实队列下标 `queued:true`，不在队列时按段下标兜底且 `queued:false`；**取消 −1 哨兵**，调用点据 `queued` 判定徽标与文案。
+- `controller.startAudition` 的 PlayPlan 不再使用 `cfg.sequence.indexOf(seg.id)` 的 −1 哨兵：段存在但不在队列时，`sequenceIndex` 落在段列表下标空间且恒 ≥ 0，`queued` 单独承担「在不在队列」的语义（`resolveAuditionSequenceIndex` 纯函数，可单测）；
+- 既有 `BA-F-12` 用例保留但注明其**单独不足以**证明本条（该用例的两段都在 `sequence` 里，无论实现是否带哨兵都绿）。
 
-### 撤销入口可见性（N-2）
+### 撤销入口可见性（项3 · 3-f）
 
-- 撤销确认改为双步契约：`undoDelete()` 只写 `state.undoConfirm`，`confirmUndo()` 才提交；新增 `src/ui/editor/undo-confirm.ts` 单一构建器，横幅含「确认恢复 / 取消」双按钮（`undo-confirm-apply` / `undo-confirm-cancel`）。
+- 回收站入口改按**总条数**判可见：栈里还有条目、但都已随更早的恢复一并回退（stale）时，入口不再整块消失，文案改为 `🗑 回收站 (N · 已失效)`，面板头 `回收站（N 条，均已失效）`；
+- 计数口径收敛到 `src/ui/editor/undo-counts.ts` 一处，入口、面板头、空态判定复用同一份计数；反向记录（`reverse === true`，`confirmUndo` 的簿记、永远不可恢复）不再占列表行、不计入总数，消除「头部报 N、列表里有点不动的重复行」。
 
-### 调速不再清空撤销栈（N-3）
+### 调速不再清空撤销栈（项3 · 3-c）
 
-- `clearUndoHistory` 调用点按语义分流：调速路径不再清栈（8 处调用点逐一复核，仅世界线真实断裂时清理）。
+- 调速属「不改变删了哪些段」的编辑，不再触发世界线断裂：撤销横幅、回收站入口、`fvp:undo-history` 存储键全部保留；
+- 与当前编排的落差改由「逐条门禁 + 恢复前确认」承担（恢复前弹出确认框，见下）。
 
-### 弹层暂停通知计时（N-4）
+### 弹层暂停通知计时（项2）
 
-- 通知计时引入暂停深度：`setViewNoticePause` 支持嵌套登记，移动端详情弹层开启时暂停、关闭时恢复；桌面端常驻详情不暂停；弹层与悬停两套登记互不撤销。
+- 暂停登记改为配对计数：`pauseAll` / `resumeAll` 按「进入 +1 / 退出 −1、归零才真正恢复」，支持多层模态叠加（段详情面板 + 回收站 + 驾驶舱同时暂停时，关掉其中一层不会误解其它层）；
+- 暂停期间到达的新通知不启动计时（登记为休眠条目），恢复时按完整时长重新起算，既不在暂停期 arm、也不在恢复瞬间立即过期；
+- 通知分级口径：info 5s / warn 10s / error 30s，各自独立并发上限 3 条，warn/error 同文案折叠为「×N」。
 
 ### 负向回归用例（N-5）
 
-- `play-mode.test.ts` 新增负向用例：段存在但不在队列（`inQueue:false`）时断言 `sequenceIndex ≥ 0 且 ≠ −1`，纯函数层与 `startAudition` 端到端两层同覆盖；同时补正向用例（队列顺序与段下标不一致时须返回队列下标）。
+- 新增 `N-5` 负向用例：段存在但不在队列（`inQueue=false` 且不在 `sequence`）时 `sequenceIndex ≥ 0 且 ≠ -1`、`queued=false`；同时覆盖纯函数与 `startAudition` 端到端两层。回退成 `indexOf` 直返 −1 的实现上该用例变红（红→绿双向实测）。
 
 ### 门禁匹配手段（N-6）
 
-- `gate-undo.mjs` 改为词法扫描：剔除行注释 / 块注释 / 字符串 / 模板串字面段 / 正则字面量（等长空白保留行号）后再按 `\bcommitEdit\b\s*\(` 匹配，消除「带空格与跨行漏报、注释内误报」；
-- `gate-layers.mjs` 正则补 `gi` 标志并对整文件剔除注释与字符串，消除大写与 `calc/max/min/clamp` 形态漏检。
+- `scripts/gate-undo.mjs`：旧的逐行 `includes('commitEdit(')` 字面子串匹配既漏又误（漏 `commitEdit (` 带空格、漏跨行拆分；误报行注释与字符串字面量）。改为先做词法扫描（剔除 `//`、块注释、单/双引号串、模板串字面段、正则字面量）保留代码骨架与行号映射，再按标识符边界匹配；
+- `scripts/gate-layers.mjs`：补 `i` 标志并剔除注释内带冒号的写法，`Z-INDEX: 999` / `Z-Index: 999` 这类真实生效的层级字面量不再漏判；
+- 两条门禁的匹配手段均改写为「先剔除注释与字符串字面量、再按标识符边界匹配」，漏报（带空格 / 跨行）与误报（注释 / 字符串）两个方向同时修掉；鉴别力由注入探针的红/绿对照验证（探针用完即还原，不留在补丁里）。
 
 ### 版本与验证
 
-- package.json bump 0.3.3（SW BUILD_ID 注入链路 scripts/build-sw.mjs 读版本号，随构建自动更新，产物 `BUILD_ID=20261106142453-v0.3.3`）；
-- 实跑门禁（终态）：单测 24 文件 349 条全绿（基线 20 文件 279 条）；desktop E2E 72 过 + 1 已知环境挂（cockpit-path3 headless Wake Lock，基线同挂）；tsc / eslint 0 错；覆盖率核心层 98.76% / 分支 93.53% / 函数 98.91% / 行 98.76%（阈值 90%）；体积门禁主 bundle gzip 44.5KB、总量 54.1KB；gate-layers / gate-undo / gate-decode / key-compat 均 PASS；
-- 干净基线 `a5abbdf` 从零应用补丁后同口径复现全绿（补丁 28 文件，+4412 / −214）；
-- **回滚口径**：本版本以单一全量补丁交付，只支持整体回退到 `a5abbdf`；**不支持按缺陷单点 revert**（各缺陷改动在 controller.ts / editor.ts 等文件内交叉，单文件回退会导致类型检查 30 处以上错误或 E2E 双端变红）。
+- `package.json` bump 0.3.3（`BUILD_ID` 注入链路 `scripts/build-sw.mjs` 读版本号，随构建自动更新，构建日志实测带 `v0.3.3`）；
+- 实跑门禁（干净工作树 `git worktree add <path> a5abbdf` + `git apply` 后 `npm ci`，退出码逐条记录）：`npx tsc --noEmit` 0、`npx eslint .` 0、`npx vitest run` 24 文件 / 349 条全绿、`npm run build` 0、`node scripts/check-size.mjs` 0、`node scripts/check-pwa.mjs` 0；
+- 两条对照脚本**必须带基线树参数**，无参只打用法并以非 0 退出：`node scripts/gate-decode.mjs <基线树>` 0、`node scripts/key-compat.mjs <基线树> .` 0。基线树经 `git worktree add` 创建即可，**不需要装 `node_modules`**（两脚本用 esbuild 打包时以当前树 `node_modules` 为 `nodePaths`）；
+- 门禁脚本本次为 **2 新增（`gate-decode.mjs`、`gate-layers.mjs`）+ 1 修改（`gate-undo.mjs`）**。接入状态三分开：`gate:undo` **已接入** `.github/workflows/ci.yml`（第 32 行 `run: npm run gate:undo`）与 `package.json` scripts；`gate-layers`、`gate-decode` **未接入**——既不在 `package.json` scripts，也不在 workflows，只能手工执行；
+- `FVP_CHROMIUM_PATH=/opt/chromium.org/chromium/chrome npx playwright test` → 72 passed / 1 failed；唯一失败 `tests/e2e/cockpit-path3.spec.ts`（`cockpit-wakelock-hint` 不可见）在基线 `a5abbdf` 上同样失败，属 headless Chromium 无 Wake Lock API 的环境差异，非本补丁引入；
+- 375×667 横向溢出实测（`scrollWidth - clientWidth`，`mobile-375` 档）：页面主容器 `html` / `body` / `#app` 首页、详情弹层、回收站三视图均为 **0**；`.fvp` / `.fvp-editor` 内层为 15px（来自 `SPAN.tl__tick-label` 刻度标签），基线 `a5abbdf` 同值，属既存、本补丁未改；
+- **只支持整体回退**：本次只交一份全量补丁，不支持按批次 / 按单元独立 revert。单文件回退实测后果（复核二给出）：单独退回 `notice-center.ts` → `tsc` 30 处错误；单独退回 `undo-store.ts` → 53 处错误；单独退回 `editor.ts` → 类型检查通过、单测全绿，但端到端双端变红（UI 接线被撤掉，撤销/恢复判据整体失效）。
 
 ## [0.3.2] - 2026-11-04
 

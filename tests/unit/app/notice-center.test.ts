@@ -1,5 +1,5 @@
 /**
- * v0.3.2 · 项1：通知中心单测（纯逻辑，Node 可测——仿 persistence.ts 注入先例）。
+ * v0.3.2 · 项1：通知中心单测（纯逻辑，Node 可测——仿 `src/core/config/persistence.ts` 注入先例）。
  *
  * 覆盖：冻结三通道解析与优先级（D-9）、pruneInfos / pruneKindNotices / pruneNotices
  * 挤位纯函数、foldNotices 折叠纯函数、分级时长（info 5s / warn 10s / error 30s）、

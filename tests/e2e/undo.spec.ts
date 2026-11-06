@@ -194,11 +194,13 @@ test('项2+10 · 删→调速→栈清空 + 回收站隐藏 + 键移除', async 
   // v0.3.3 · 项3 · 期望反转（旧期望：调速后 banner 隐藏 / recycle-bin 隐藏 / 存储键移除）。
   // 反转理由：调速是「不改变删了哪些段」的编辑，按方案 3-c 不再清栈。历史与入口都保留，
   // 存储键仍在；与当前编排的落差改由「逐条门禁 + 恢复前确认」承担。
-  // ⚠ 该用例已实跑通过（含本用例反转后的新期望）。实跑方式：
+  // 已实跑通过（v0.3.3 定稿复核修正：此前此处写「⚠ 未实跑（沙箱未起浏览器）」，
+  // 与实跑结论直接冲突，且正好压在 N-3 最高优先级缺陷的判据头上）。
+  // 本用例是 N-3（调速清空撤销栈）的核心判据，双端实跑方式：
   //   FVP_CHROMIUM_PATH=/opt/chromium.org/chromium/chrome npx playwright test
-  // 沙箱内 headless Chromium 不提供 Wake Lock API，仅影响 cockpit-path3 的跟屏提示用例
-  //（该条在无补丁基线上同样失败，属环境限制）；CI 的 GitHub Actions Runner 浏览器
-  // 该连接可用，同用例在 CI 上通过（2026-11-06 run 42235441682：73 passed / 0 failed）。
+  //   （Playwright 经 playwright.config.ts 的 webServer 自起 vite dev server；
+  //     desktop 1280×720 与 mobile-375 两档按 @m375 标记各自执行）
+  // 本用例标题无 @m375，故仅 desktop 档跑；同文件其它三条 @m375 用例双端各跑一次。
   await seedAndLoad(page, twoSegConfig());
   await page.getByTestId('segment-item-bbb111').click();
   await page.getByTestId('detail-delete').click();
