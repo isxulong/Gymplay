@@ -22,9 +22,10 @@
  * 退出码：0 = 通过（字面量全在登记表内）；1 = 红（有越界字面量或登记表缺失）。
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { join, relative } from 'node:path';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const STYLES_DIR = join(ROOT, 'src/styles');
 const REGISTRY = join(STYLES_DIR, 'layers.css');
 

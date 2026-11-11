@@ -13,12 +13,13 @@
  * 可选环境变量：FVP_CHROMIUM_PATH 指向系统 Chromium（与 playwright.config.ts 同名约定）。
  */
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join, extname } from 'node:path';
 import { chromium } from '@playwright/test';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const TMP = join(ROOT, 'smoke-tmp');
 const SERVE = join(TMP, 'serve');
 const PORT = 5201;

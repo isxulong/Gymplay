@@ -3,6 +3,102 @@
 版本口径：App 版本 SemVer（feat 升 minor、fix 升 patch、协议破坏性变更升 major）；
 配置协议版本（Schema v）独立演进，两边分开记录（蓝图版本演进五条 · 第 5 条）。
 
+## [0.3.4] - 2026-11-11
+
+修复补丁（App 版本 0.3.3 → 0.3.4；配置协议版本 Schema v1 **不变**；密钥编解码语义不动）。
+升 patch 的依据：`BUILD_ID` 由 `scripts/build-sw.mjs` 直接取 `package.json` 的 version，
+不升版本会让新旧产物 BUILD_ID 相同、缓存的版本区分失效（同 v0.3.3 的升版理由）。
+
+### 跨平台路径缺陷（P0 · 已发生型）
+
+`new URL(..., import.meta.url).pathname` 被当作本地文件路径使用，共 **20 处缺陷 / 19 个文件**
+（21 处命中，`scripts/smoke-sw-update.mjs` 的 `new URL(req.url, BASE).pathname` 是 HTTP 路径，
+属正确用法，不计入）。
+
+- Windows 上该表达式返回 `/E:/repo/…`，首字符斜杠与盘符并列，经 `node:path` 拼成
+  `E:\E:\repo\…`（重复盘符）；
+- 后果链：`build-sw` 报「dist/sw.js 不存在」→ `gate:size` / `gate:pwa` 报「dist/ 不存在」→
+  `gate-layers` 抛 `ENOENT scandir`；**14 个** E2E spec（`tests/e2e/` 共 17 个 spec，另 3 个
+  本就不含该写法）的 fixture 绝对路径非法；
+- **实测影响面**：E2E 原样 **60 failed / 13 passed**（73 条），失败报错**全部**为
+  `ENOENT … 'E:\E:\…\fixture-vp8-opus-10s.webm'`，零条非此原因；修复后 **1 failed / 72 passed**，
+  唯一剩余失败是 `cockpit-path3` 的 Wake Lock 已知环境挂（见 v0.3.2 节，与本条无关）；
+- **为何长期不暴露**：CI 只在 `ubuntu-latest` 跑，POSIX 上 `pathname` 恰好是合法路径。
+
+修法：`scripts/*.mjs`（5 个）改用 `fileURLToPath(new URL(...))`（仓库内 `gate-decode` /
+`key-compat` 已有正确先例）；E2E 侧因不引入 `@types/node`（ADR-003），新增
+`tests/e2e/e2e-paths.ts`（29 行纯函数）并由 14 个 spec 引用，配
+`tests/unit/app/e2e-paths.test.ts`（13 例）。
+
+**新增门禁 `gate:paths`**（`scripts/gate-paths.mjs`）：全仓禁止该写法，**先剔除注释与字符串
+字面量再匹配**（否则本脚本自身注释即命中，`gate-layers` 踩过同一个坑），且剔除时保留换行
+（否则报出的行号整体前移）。判据两端都有读数：原始树命中 20 处 → exit 1；修复后 0 处 → exit 0。
+已接入 `package.json` 的 `gate` 聚合脚本与 `ci.yml`。
+
+**新增 `windows-gate` CI job**：把同一套门禁在 `windows-latest` 上再跑一次。与 `gate:paths`
+判据不同（真跑一遍 vs 源码禁止写法），不构成重复核对。
+
+### 门禁自身的假绿（P2 · 可构造型）
+
+`gate:pwa` 第 3 条断言原为 `/serviceWorker/` 词面匹配：只要产物里出现过 `serviceWorker`
+这个词即算通过。把 `src/ui/sw-update.ts` 的 `.register('sw.js')` 换成 `register(undefined)`
+后，`'serviceWorker' in navigator` 的探测分支仍让产物含该词 → **门禁 exit 0**（与
+`docs/lessons/EXP-005` 记录的静默假绿同形）。
+
+- 新断言：`/serviceWorker\s*\.\s*register\s*\(\s*["'`]/`（锚定「用脚本地址真的注册了」）；
+- **红/绿双向实测**：`register(undefined)` → exit 1；整行删除 → exit 1；正确代码 → exit 0。
+
+### 未接入的门禁补齐
+
+`gate:layers`（层级登记表之外零 `z-index` 数值字面量）此前既不在 `package.json` scripts、
+也不在 workflows，只能手工执行（v0.3.3 节已自陈）。现接入 `package.json`（`gate:layers`）
+与 `ci.yml`；同时新增 `gate` 聚合脚本，本机一条命令跑完 9 道闸。
+
+**`gate-decode` / `key-compat` 不接入 CI**：二者需基线树路径参数（`gate-decode` 还要校验
+基线身份），属双树对照工具而非仓库自检闸，缺参数会恒红。此区分写在此处，避免下次被读成
+「都该接上」。
+
+### 数据与文案一致性（P1 · 可对撞型）
+
+- **`meta.appVersion` 硬编码 `'0.2.0'`**（`src/app/controller.ts` 首次导入视频路径）：该字段
+  自 v0.3.x 起从未更新，而它会经 `canonicalize` 进入分享密钥与 `.json` 导出，**跨用户传播
+  一份错误事实**（排障按 0.2.0 比对必错）。改为不写该字段——它是可选字段（`schema.ts` 仅在
+  出现时校验类型），取值源只能是 `package.json`，而构建期注入超出 ADR-003 白名单。
+- **跨会话清栈静默**（判据 3-d 的漏点）：`restoreUndoStack()` 在栈顶世界线与当前配置对不上时
+  整栈丢弃并返回 `discarded: true`，但该标志**无任何生产消费点** → 用户看到回收站从 N 条
+  变空却无解释。`bootstrap.ts` 现复用既有通知通道补一条 warn，不新增通道或字段。
+- **ADR-001 P7-B 口径对齐**：`fvp:playback` 快照实际**只写不读**（`loadPlayback()` 在生产代码
+  零调用点），续播只由 `scheduler.resync()` 读 `engine.getTime()` 完成。ADR 已加「实施现状」
+  登记，明确不得据此承诺「刷新后续播」。
+
+### 性能
+
+`queueFrame()` 原每帧 `compilePlan(cfg).items.length`（`emitFrame` 挂在引擎 tick 上，rVFC
+最高约 60Hz），300 段配置下约每秒 1.8 万次临时分配（`Map` + 等长数组），而该值整场播放恒定。
+改为 `startQueue()` 时算一次存入 `queueTotalCache`；「队列在播期间配置不变」的正确性前提
+（所有编辑入口先经 `stopQueueInternal()`）已写进注释，并注明若将来支持边播边改须改为
+按 plan 版本号比较。
+
+### 工程配置
+
+- `package-lock.json` 根 `version` 由 `0.3.1` 同步到 `0.3.4`（v0.3.2 / 0.3.3 两次升版都漏同步，
+  `npm ci` 不校验根 version 故一直静默）；
+- lockfile 的 256 处 `resolved` 由 `registry.npmmirror.com` 换回 `registry.npmjs.org`
+  （`integrity` 字段 256 条俱全，换 host 后 `npm ci` 实测通过）。原状态下 CI 的
+  `cache: npm` + `npm ci` 把第三方镜像当作唯一下载源。
+
+### 门禁实跑（终态）
+
+`npm run gate` **exit 0**：ESLint 0 错 / `tsc --noEmit` 0 错 / 单测 **25 文件 362 用例全过**
+（基线 349 + 新增 13）/ core 覆盖率 98.76%（行）· 93.38%（分支）· 100%（函数）/ 构建成功
+（主 bundle gzip 44.5KB）/ `gate:size` · `gate:pwa` · `gate:undo` · `gate:layers` ·
+`gate:paths` 全过。E2E：桌面 + mobile-375 双档 **72 过 / 1 已知环境挂**（`cockpit-path3`
+headless Wake Lock，与 v0.3.2 基线同挂）。
+
+**未验证边界**：真机走查（60min 导入 / 静置不锁屏 / 线控双击）仍未完成，本轮不含真机结论；
+`windows-gate` job 未在 GitHub Actions 实跑（仅在本地 Windows 复现同等步骤并全绿）；
+`macOS` 未验证。
+
 ## [0.3.3] - 2026-11-06
 
 v0.3.3 修复补丁（App 版本 0.3.2 → 0.3.3；配置协议版本 Schema v1 **不变**；配置密钥编解码语义不动——key-compat 对基线 `a5abbdf` 固定样例逐字节一致）。只交一份全量补丁，**不支持按批次独立 revert**（详见本节末「版本与验证」）。升 patch 的依据：本次含用户可见行为变化（调速不再清空撤销栈、回收站入口可见性），且离线缓存的 `BUILD_ID` 由 `scripts/build-sw.mjs` 直接取 `package.json` 的 version——不升版本会让新旧产物 BUILD_ID 相同，缓存的版本区分失效。

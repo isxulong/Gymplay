@@ -8,10 +8,11 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { e2ePath } from './e2e-paths';
 
 const FIXTURE_URL = '/tests/e2e/fixtures/fixture-vp8-opus-10s.webm';
 /** 文件系统路径（setInputFiles 用，与 export-import.spec 同构） */
-const FIXTURE_PATH = new URL('./fixtures/fixture-vp8-opus-10s.webm', import.meta.url).pathname;
+const FIXTURE_PATH = e2ePath('./fixtures/fixture-vp8-opus-10s.webm');
 
 interface TestSegment {
   id: string;

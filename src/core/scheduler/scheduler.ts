@@ -116,12 +116,22 @@ export class SegmentScheduler {
 
   /**
    * 下一段（F6 驾驶舱大按钮 / 线控双击，Media Session nexttrack）。
-   * 复用段尾推进语义：末段按 loop 规则处理（queue 绕回 / off 收尾 / segment 重播）。
+   *
+   * v0.3.4 修复（A 席 D05，可构造型）：旧实现直接调 `this.advance()`，而 `advance()` 在
+   * `loop.mode === 'segment'` 下**总是重播当前项**（那是「段尾自动重播」的语义，不是「用户
+   * 要求换段」的语义）。于是单段循环模式里连点三次「下一段」，实际收到的是
+   * `seek(0), seek(0), seek(0)`——按钮完全失效，驾驶舱主操作之一变哑巴。
+   * 实测（FakeEngine 记录指令序列）：起播 a 段，next ×3 后仍是 a 段、seek 序列 0,0,0,0；
+   * 对照 `mode: 'off'` 同样点法能正常走到 c 段。
+   *
+   * 语义定案：**用户显式「下一段」永远换项**，不受单段循环影响；只有「段尾自然到达」才走
+   * 单段重播。同时用户手动跳段不算「播完一圈」，故末段绕回时**不累加 loopsDone**——否则
+   * 驾驶舱「第 N 圈」会因手动跳段虚增（A 席同时指出的 `advancePastEnd` 污染）。
    * 不改播放/暂停状态（暂停中跳段 → 落在新段起点保持暂停）。
    */
   next(): void {
     if (this.state !== 'playing') return;
-    this.advance();
+    this.advanceByUser();
   }
 
   /**
@@ -247,6 +257,29 @@ export class SegmentScheduler {
     if (now + END_EPSILON >= item.end) this.advance();
   }
 
+  /**
+   * 用户显式「下一段」（v0.3.4）：与 `advance()`（段尾自然推进）分开两条语义。
+   *
+   * - 单段循环（`segment`）不适用重播语义——用户点「下一段」就是要换项；
+   * - 末段：`queue` 绕回首项但**不累加 loopsDone**（手动跳段不构成「播完一圈」）；
+   *   `off` / `segment` 按收尾处理（与自然到达末尾一致）。
+   */
+  private advanceByUser(): void {
+    const next = this.queueIndex + 1;
+    if (next < this.plan.items.length) {
+      this.queueIndex = next;
+      this.applyItem(this.plan.items[next]);
+      return;
+    }
+    // 末段手动「下一段」：整列循环时绕回首项，但不计圈
+    if (this.plan.loop.mode === 'queue' && this.plan.items.length > 0) {
+      this.queueIndex = 0;
+      this.applyItem(this.plan.items[0]);
+      return;
+    }
+    this.finish();
+  }
+
   private advance(): void {
     const item = this.currentItem();
     if (item === null) return;
@@ -275,6 +308,11 @@ export class SegmentScheduler {
         return;
       }
     }
+    this.finish();
+  }
+
+  /** 收尾同一出口（自然到达末尾 / 用户手动越过末段都走这里）。 */
+  private finish(): void {
     this.state = 'finished';
     this.disarmDriver();
     this.engine.pause();

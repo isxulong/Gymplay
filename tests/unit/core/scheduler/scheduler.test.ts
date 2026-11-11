@@ -322,14 +322,32 @@ describe('scheduler · 驾驶舱跳段（M2，F6 大按钮 / 线控 nexttrack/pr
     expect(onFinish).toHaveBeenCalledOnce();
   });
 
-  it('next：末段且 loop=queue → 绕回首段', () => {
+  it('next：末段且 loop=queue → 绕回首段，但不计圈', () => {
+    // v0.3.4 语义修订（A 席 D05）：旧断言期望 loopsDone === 1，即「用户手动跳段」被算作
+    // 「播完一圈」。这会在两处失真：① 驾驶舱「第 N 圈」因手动跳段虚增；② 用户手动越过末段
+    // 后 count 配额被静默消耗。定案：只有「段尾自然到达」才计圈，手动 next 绕回不计圈。
     const { scheduler } = setup(twoSegmentConfig({ loop: { mode: 'queue' } }));
     scheduler.start();
     scheduler.next();
     scheduler.next();
     const s = scheduler.current();
     expect(s.segmentId).toBe('aaa000');
-    expect(s.loopsDone).toBe(1);
+    expect(s.loopsDone).toBe(0);
+    expect(s.state).toBe('playing');
+  });
+
+  it('next：单段循环（segment）下用户点「下一段」必须换项，不得重播当前段', () => {
+    // A 席 D05 的原始失效形态：旧实现 next() 直调 advance()，而 advance() 在 segment 模式下
+    // 总是重播当前项 → 连点三次「下一段」收到 seek(0),seek(0),seek(0)，按钮完全失效。
+    const { engine, scheduler } = setup(twoSegmentConfig({ loop: { mode: 'segment' } }));
+    scheduler.start();
+    scheduler.next();
+    const s = scheduler.current();
+    expect(s.segmentId).not.toBe('aaa000');
+    // 换项而非重播：最后两条指令应是「套新段速率 + seek 到新段起点」，段 id 已变
+    expect(engine.opSummary().slice(-2)).toEqual(['setRate(2)', 'seek(10)']);
+    // 用户跳段不计圈
+    expect(s.loopsDone).toBe(0);
     expect(s.state).toBe('playing');
   });
 

@@ -6,10 +6,11 @@
  * 任一超限 exit 1。
  */
 import { gzipSync } from 'node:zlib';
+import { fileURLToPath } from 'node:url';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
-const DIST = new URL('../dist', import.meta.url).pathname;
+const DIST = fileURLToPath(new URL('../dist', import.meta.url));
 const MAIN_BUNDLE_GZIP_LIMIT = 200 * 1024; // M0 空壳构建门禁 <200KB
 const TOTAL_GZIP_LIMIT = 1024 * 1024; // 上游硬约束 <1MB
 

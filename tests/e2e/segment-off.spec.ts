@@ -6,8 +6,9 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { e2ePath } from './e2e-paths';
 
-const FIXTURE = new URL('./fixtures/fixture-vp8-opus-10s.webm', import.meta.url).pathname;
+const FIXTURE = e2ePath('./fixtures/fixture-vp8-opus-10s.webm');
 
 test('项6 · 不选段拖进度条可预览 + 未勾选段弱化但仍可点选', async ({ page }) => {
   const cfg = {

@@ -6,8 +6,9 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { e2ePath } from './e2e-paths';
 
-const FIXTURE = new URL('./fixtures/fixture-vp8-opus-10s.webm', import.meta.url).pathname;
+const FIXTURE = e2ePath('./fixtures/fixture-vp8-opus-10s.webm');
 
 test('路径2：分享链接新开页面完整还原编排', async ({ page, browser }) => {
   // —— 发送方：编排一份有辨识度的配置 ——

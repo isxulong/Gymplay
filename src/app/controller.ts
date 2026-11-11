@@ -384,7 +384,10 @@ export function createEditorController(opts: {
     if (!cfg) return false;
     // v0.3.2 · 项9：与试听互斥——队列起播前先停 audit（playQueue / 驾驶舱续播路径统一收口）
     if (auditScheduler) exitAudit('user');
-    scheduler = new SegmentScheduler(engine, systemClock, compilePlan(cfg), {
+    // v0.3.4：队列项数只在此处算一次，供 queueFrame 每帧读取（见 queueTotalCache 注释）
+    const plan = compilePlan(cfg);
+    queueTotalCache = plan.items.length;
+    scheduler = new SegmentScheduler(engine, systemClock, plan, {
       capabilities: { rVFC: caps?.rVFC ?? false },
       onFinish: () => {
         // v0.3.2 · 项7：播完确定性落点——onFinish 不经 stopQueueInternal（现状缺陷：
@@ -814,18 +817,29 @@ export function createEditorController(opts: {
     return true;
   }
 
+  /**
+   * 当前队列项数（v0.3.4 缓存）：`queueFrame()` 由 `emitFrame()` 驱动，而 `emitFrame` 挂在
+   * 引擎 tick 上（rVFC 主线最高约 60Hz）。旧实现每次 `compilePlan(cfg).items.length` 都会
+   * 新建 1 个 Map + 1 个等长数组——300 段配置下约每秒 1.8 万次临时分配，移动端表现为持续性
+   * GC 抖动，而该值在整场播放内恒定。
+   *
+   * 正确性前提（改动本函数或编辑路径前必读）：队列在播期间配置不变。
+   * 依据：所有编辑入口都先经 `stopIfPlayingBeforeEdit()` / `mark()` / `selectSegment()` 等
+   * 调用 `stopQueueInternal()` 停队列；`startQueue()` 在构造调度器前重算一次。
+   * 若将来允许「边播边改」（热更新 plan），此缓存必须改为按 plan 版本号比较，不能直接读。
+   */
+  let queueTotalCache = 0;
+
   function queueFrame(): QueueFrame {
     if (!scheduler) {
       return { playing: false, paused: video.paused, queueIndex: -1, queueTotal: 0, segmentId: null, rate: 1, remainingMs: 0, loopsDone: 0, auditSegmentId: null, auditRate: 1 };
     }
     const s = scheduler.current();
-    const cfg = activeConfig();
-    const total = cfg ? compilePlan(cfg).items.length : 0;
     return {
       playing: s.state === 'playing',
       paused: video.paused,
       queueIndex: s.queueIndex,
-      queueTotal: total,
+      queueTotal: queueTotalCache,
       segmentId: s.segmentId,
       rate: s.rate,
       remainingMs: s.remainingMs,
@@ -1041,7 +1055,12 @@ export function createEditorController(opts: {
     } else {
       const cfg = createInitialConfig(
         { filename: file.name, duration: actual },
-        { createdAt: new Date().toISOString(), appVersion: '0.2.0' },
+        // 不写 appVersion：该字段是可选的「来源版本」记录（schema.ts 仅在出现时校验类型），
+        // 此处曾硬编码 '0.2.0'，自 v0.3.x 起从未更新 → 每份新建配置都带着错误的来源版本，
+        // 且经 canonicalize 进入分享密钥 / .json 导出，跨用户传播一份假事实（排障按 0.2.0
+        // 比对必错）。取值源只能是 package.json，而构建期注入超出 ADR-003 白名单，
+        // 故按「可选字段不承担版本追踪义务」直接省略。
+        { createdAt: new Date().toISOString() },
       );
       store.update({ config: cfg, configOrigin: 'local-edit' });
       persist(cfg);

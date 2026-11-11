@@ -18,6 +18,7 @@
 | P3 循环精度 | rVFC 主线 P95=0.024s、setInterval(50ms) 对照 P95=0.037s，均 ≤0.300s | **调度主线 = rVFC，50ms 轮询兜底**；两种模式都在调度器实现、运行时可降级（L1 clock / L2 scheduler） |
 | P7-A 无手势 play() | 被拒（预期） | 所有交互以用户点击起手（L0 gesture） |
 | P7-B 切后台音频中断 | 复现 | **回前台 currentTime 校准续播**进 persistence/播放恢复设计（`scheduler.resync()` + `fvp:playback` 快照） |
+| P7-B 实施现状（v0.3.4 对账） | — | **`fvp:playback` 快照目前只写不读**：`persistence.savePlayback()` 播放中每 1s 写入，但 `loadPlayback()` 在生产代码中**零调用点**（仅 `tests/unit` 引用）。实际续播只由 `onVisibility → scheduler.resync()` 读 `engine.getTime()` 完成。故本行「快照」应读作**预留载体**，不得据此承诺「刷新后续播」——刷新后视频句柄必失，续播要先走重选文件 + `alignConfigToVideo` 边界钳制，那是未实现的产品能力。启用读取之前请勿把该快照当既有能力引用。 |
 | P8 playsinline | 生效 | 页内播放成立，`playsInline` 防御性写入 NativeEngine |
 | P9 HEVC | 可直读（hev1 / hvc1 双样本出画面出声） | M1 的 HEVC 不需转码引导，仅做提示；R9 fallback 文案保留给不支持平台 |
 | P10 URL 容量 | 产线管线实测值（2026-11-03 重跑，canonicalize＋deflate level 9，pako 1.0.11，Node 22/vitest 环境；典型配置档位：10 段 518 / 25 段 796 / 50 段 1271 / 80 段 1852 / 100 段 2235 / 150 段 3199 字符）：80 段密钥 1852 字符 > 1500 判定线 | URL 密钥适用 ≤50 段（1271 字符 ≤ 1500）；>50 段走 .json 导出/导入降级（M3 接线）；pako 锁定 1.0.11（实测版本）。原 1911/1359 为旧探针管线（JSON.stringify＋默认级压缩）数值，已作废 |

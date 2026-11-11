@@ -7,11 +7,12 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { e2ePath } from './e2e-paths';
 
 // 注：不引入 node:fs（依赖白名单无 @types/node）；导出文件经 download.path() 拿到真实路径后
 // 直接作为 setInputFiles 的输入回读，内容断言走「同页回导 → 与当前内容一致」的 round-trip。
 
-const FIXTURE = new URL('./fixtures/fixture-vp8-opus-10s.webm', import.meta.url).pathname;
+const FIXTURE = e2ePath('./fixtures/fixture-vp8-opus-10s.webm');
 
 /**
  * E2E 跑在 Node 上，但依赖白名单无 @types/node：经 globalThis 取原生 Buffer 构造

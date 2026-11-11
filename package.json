@@ -1,7 +1,7 @@
 {
   "name": "gymplay",
   "private": true,
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "健身视频分段变速播放器（Gymplay）——纯静态 PWA，本地文件分段变速跟练",
   "type": "module",
   "scripts": {
@@ -15,7 +15,10 @@
     "gate:size": "node scripts/check-size.mjs",
     "gate:pwa": "node scripts/check-pwa.mjs",
     "gate:undo": "node scripts/gate-undo.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "gate:layers": "node scripts/gate-layers.mjs",
+    "gate": "npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run gate:size && npm run gate:pwa && npm run gate:undo && npm run gate:layers && npm run gate:paths",
+    "gate:paths": "node scripts/gate-paths.mjs"
   },
   "dependencies": {
     "pako": "1.0.11"

@@ -8,10 +8,11 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { e2ePath } from './e2e-paths';
 import type { Page } from '@playwright/test';
 
-const FIXTURE = new URL('./fixtures/fixture-vp8-opus-10s.webm', import.meta.url).pathname;
-const LONG_CONFIG = new URL('./fixtures/config-v031-long.json', import.meta.url).pathname;
+const FIXTURE = e2ePath('./fixtures/fixture-vp8-opus-10s.webm');
+const LONG_CONFIG = e2ePath('./fixtures/config-v031-long.json');
 
 async function importFixture(page: Page): Promise<void> {
   await page.goto('/');

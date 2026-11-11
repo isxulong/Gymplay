@@ -12,8 +12,9 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { e2ePath } from './e2e-paths';
 
-const FIXTURE = new URL('./fixtures/fixture-vp8-opus-10s.webm', import.meta.url).pathname;
+const FIXTURE = e2ePath('./fixtures/fixture-vp8-opus-10s.webm');
 
 declare global {
   interface Window {

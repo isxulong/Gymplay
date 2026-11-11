@@ -8,12 +8,13 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { e2ePath } from './e2e-paths';
 
 type NodeBufferFactory = { from(input: string, encoding?: string): object };
 const nodeBuffer = (globalThis as { Buffer?: NodeBufferFactory }).Buffer;
 if (!nodeBuffer) throw new Error('E2E 需要运行在带全局 Buffer 的 Node 环境');
 
-const FIXTURE = new URL('./fixtures/fixture-vp8-opus-10s.webm', import.meta.url).pathname;
+const FIXTURE = e2ePath('./fixtures/fixture-vp8-opus-10s.webm');
 
 interface TestSegment {
   id: string;

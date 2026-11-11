@@ -76,6 +76,15 @@ export function bootstrap(): AppContext {
   const undoRestored = restoreUndoStack(readUndoRaw(), config);
   const undoCountsInit = undoCounts(undoRestored.entries);
 
+  // 判据 3-d 的跨会话执行点（v0.3.4 补齐）：上一版只在**会话内**的清栈路径（controller 的
+  // clearUndoHistory）留痕，而 restoreUndoStack 在「栈顶世界线与当前配置对不上」时会整栈丢弃
+  // 并返回 discarded: true —— 该标志此前无任何生产消费点，于是用户看到回收站从 N 条变空
+  // 却没有任何解释。这里复用同函数上方已构造的通知通道补一条，不新增通道/字段。
+  // config === null 时不提示：首次使用或已清空，本就没有历史可丢。
+  if (undoRestored.discarded && config !== null) {
+    notices.push(makeNotice('warn', '撤销历史与当前编排已无法衔接，已丢弃；本次从空的回收站开始。'));
+  }
+
   const store = createStore<AppState>({
     ...initialState,
     capabilities,

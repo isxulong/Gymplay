@@ -8,9 +8,10 @@
  * 占位符缺失或替换后残留即 exit 1（防 sw.js 源与本脚本漂移）。
  */
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { join, relative } from 'node:path';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const DIST = join(ROOT, 'dist');
 const SW_DIST = join(DIST, 'sw.js');
 

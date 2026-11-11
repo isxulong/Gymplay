@@ -191,8 +191,24 @@ function lineOf(offset) {
   return lo + 1;
 }
 
-/** 在代码骨架上按标识符边界匹配：commitEdit + 可选空白 + ( */
-const CALL_RE = /\bcommitEdit\b\s*\(/g;
+/**
+ * 在代码骨架上找出对 `commitEdit` 标识符的**任何取值/调用**，而不是只匹配 `commitEdit(`。
+ *
+ * v0.3.4 收紧（可构造型判据，A 席 D08）：
+ * 旧正则 `/\bcommitEdit\b\s*\(/g` 只认「标识符后紧跟 (」这一种形态，下列等价调用全部漏判——
+ * 它们都绕过了 commitEditTracked 包装层（不进撤销栈），而门禁仍 exit 0：
+ *   - `commitEdit?.(r)`            可选调用
+ *   - `(0, commitEdit)(r)`         逗号表达式间接调用（打包器常见产物形态）
+ *   - `(commitEdit as any)(r)`     TS 类型断言后调用
+ *   - `const f = commitEdit; f(r)` 先赋给别名
+ * 判据改为「凡是把 commitEdit 当值用（不是定义、不是 gate-undo: 标记行、不是
+ * commitEditTracked）」即命中。宁可误报（多看一眼）也不漏放——漏放的后果是裸提交静默进
+ * 生产、撤销栈丢记录，而误报只是让作者改成显式经包装层。
+ *
+ * 唯一豁免：`function commitEdit` 定义处的形参表与函数名本身；`commitEditTracked` 因
+ * `commitEdit` 之后紧跟标识符字符 `T`，天然不被 `\bcommitEdit\b` 命中。
+ */
+const CALL_RE = /\bcommitEdit\b/g;
 const rawLines = src.split('\n');
 const bare = [];
 let m;

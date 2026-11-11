@@ -30,6 +30,15 @@ jobs:
       # v0.3.2 · 项2+10 守护（AB-P1-4）：编辑提交必须全部经 commitEditTracked 包装层
       - name: 撤销栈门禁（controller.ts 裸 commitEdit( == 0）
         run: npm run gate:undo
+      # 层级门禁：登记表之外零 z-index 数值字面量（此前未接入 CI，只能手工跑）
+      - name: 层级门禁（z-index 只走 layers.css 登记表）
+        run: npm run gate:layers
+      # 路径写法门禁（v0.3.4）：禁止 file: URL .pathname 拼本地路径。
+      # 这条闸承接「跨平台可运行」的证据责任——判据与 windows-gate 的真跑不同：
+      # 源码级禁止该写法，覆盖所有平台与所有开发者本机，0.1 秒（修复前命中 20 处、
+      # 修复后 0 处，两端都有读数）。
+      - name: 路径写法门禁（file: URL .pathname 全仓零命中）
+        run: npm run gate:paths
 
   e2e:
     runs-on: ubuntu-latest
@@ -49,3 +58,35 @@ jobs:
         if: ${{ hashFiles('tests/e2e/**/*.spec.ts') != '' }}
       - run: npx playwright test
         if: ${{ hashFiles('tests/e2e/**/*.spec.ts') != '' }}
+
+  # 跨平台门禁（v0.3.4 新增）：上面两个 job 都在 ubuntu-latest 上跑，
+  # 而 `new URL(...).pathname` 在 Windows 上会产出 '/E:/…' 被拼成 'E:\E:\…'，
+  # 导致 build-sw / gate:size / gate:pwa / gate-layers 全部失败、14 个 E2E spec 的
+  # fixture 绝对路径非法，却因 CI 只跑 Linux 而长期不暴露。
+  #
+  # 与 gate:paths 的分工（勿据「判据重叠」删除本 job）：
+  #   · gate:paths  证明「源码里没有这个坏写法」（静态，0.1s，覆盖所有平台与开发者本机）；
+  #   · windows-gate 证明「整条链路在 Windows 上真的跑得通」（动态，含 node:fs 的
+  #     readdirSync 权限、statSync 长路径、Vite/rollup 产出的路径处理——静态闸一个字都
+  #     管不到这些）。「没有坏写法」≠「跑得通」，两者不可互替。
+  #
+  # 刻意取舍：本 job 不跑 Playwright E2E。Windows runner 上 Chromium 成本高且不稳定，
+  # 而 E2E 的 fixture 路径缺陷已由 gate:paths 在源码层拦死。这是取舍不是漏配。
+  windows-gate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:coverage
+      - name: 构建（含 build-sw 路径解析）
+        run: npm run build
+      - run: npm run gate:size
+      - run: npm run gate:pwa
+      - run: npm run gate:undo
+      - run: npm run gate:layers
