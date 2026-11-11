@@ -52,7 +52,7 @@ const SCAN_EXT = /\.(mjs|js|ts|tsx)$/;
  * 这类写法无法用文本匹配判定，靠 code review；已在此声明覆盖边界，不假装覆盖。
  */
 const URL_WITH_META =
-  /new\s+URL\s*\([^;{}]{0,300}?import\.meta\.url[^;{}]{0,300}?\)/;
+  /new\s+URL\s*\([^;{}]*?import\.meta\.url[^;{}]*?\)/;
 
 /**
  * 在「URL 表达式之后」的位置检查是否取了 pathname。
@@ -95,7 +95,9 @@ function takesPathname(original, matchEnd) {
     i += 1;
     skip();
   }
-  return original.startsWith('pathname', i);
+  // 属性名必须是完整标识符 `pathname`——补词边界，否则 `.pathnames` / `.pathnameExtra`
+  // 会被误报（B 席 R-5，实测假阳性 exit 1）。
+  return original.startsWith('pathname', i) && !/[A-Za-z0-9_$]/.test(original[i + 8] ?? '');
 }
 
 function* walk(dir) {
